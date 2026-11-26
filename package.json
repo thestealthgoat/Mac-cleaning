@@ -1,7 +1,7 @@
 {
   "name": "silt",
   "productName": "Silt",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Silt — storage, explained. A free, open-source Mac app that shows where your disk space went (including the hidden System Data) and cleans it up safely.",
   "main": "src/main/main.js",
   "license": "MIT",
