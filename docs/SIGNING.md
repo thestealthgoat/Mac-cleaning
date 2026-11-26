@@ -39,7 +39,11 @@ Then delete the exported `.p12` from Downloads (the original stays in your keych
 | `APPLE_API_KEY_ID` | API key ID |
 | `APPLE_API_ISSUER` | API issuer ID |
 
-## 4. Release
+## 4. Test the setup
+
+Run **Actions › Check signing setup › Run workflow** (or `gh workflow run check-signing.yml -R thestealthgoat/Mac-cleaning`). In about a minute it checks that the certificate opens with its password, that it holds a Developer ID identity, and that Apple accepts the API key. It only prints pass/fail, never the values.
+
+## 5. Release
 
 Push a version tag (`git tag -a v0.1.2 -m "…" && git push origin v0.1.2`). The workflow signs both architectures, sends them to Apple for notarization (usually a few minutes), staples the ticket, checks the result with `codesign`, `stapler` and `spctl`, and attaches the DMGs and zips to a draft release.
 

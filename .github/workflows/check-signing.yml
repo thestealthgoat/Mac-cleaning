@@ -1,0 +1,61 @@
+name: Check signing setup
+
+# Run from the Actions tab (or `gh workflow run check-signing.yml`) to test the
+# signing and notarization secrets in about a minute, without building.
+# Values are never printed; only pass/fail is shown.
+on: workflow_dispatch
+
+jobs:
+  check:
+    runs-on: macos-latest
+    steps:
+      - name: Test certificate, password and Apple API key
+        env:
+          P12: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          PW: ${{ secrets.MAC_CERT_PASSWORD }}
+          P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          KID_RAW: ${{ secrets.APPLE_API_KEY_ID }}
+          ISS_RAW: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          fail=0
+          ok()  { echo "✅ $1"; }
+          bad() { echo "::error::$1"; fail=1; }
+
+          # ── Developer ID certificate ──
+          if [ -z "$P12" ]; then
+            bad "MAC_CERT_P12_BASE64 is empty."
+          elif ! printf '%s' "$P12" | base64 --decode > "$RUNNER_TEMP/c.p12" 2>/dev/null || [ ! -s "$RUNNER_TEMP/c.p12" ]; then
+            bad "MAC_CERT_P12_BASE64 is not valid base64 of a .p12 file."
+          else
+            security create-keychain -p check "$RUNNER_TEMP/check.keychain" >/dev/null
+            if security import "$RUNNER_TEMP/c.p12" -k "$RUNNER_TEMP/check.keychain" -P "$PW" -T /usr/bin/codesign >/dev/null 2>&1; then
+              ok "Certificate file opens with MAC_CERT_PASSWORD."
+              if security find-identity -v -p codesigning "$RUNNER_TEMP/check.keychain" 2>/dev/null | grep -q '"Developer ID Application'; then
+                ok "It contains a Developer ID Application identity (certificate + private key)."
+              else
+                bad "No Developer ID Application identity inside — export the certificate together with its private key."
+              fi
+            else
+              bad "MAC_CERT_PASSWORD does not open the .p12 (or the file is damaged)."
+            fi
+          fi
+
+          # ── App Store Connect API key ──
+          KID="$(printf '%s' "$KID_RAW" | tr -d '[:space:]')"
+          ISS="$(printf '%s' "$ISS_RAW" | tr -d '[:space:]')"
+          api_ok=1
+          if printf '%s' "$KID" | grep -Eq '^[A-Z0-9]{10}$'; then ok "APPLE_API_KEY_ID looks like a Key ID."; else bad "APPLE_API_KEY_ID must be the 10-character Key ID (the part after AuthKey_ in the .p8 file name)."; api_ok=0; fi
+          if printf '%s' "$ISS" | grep -Eiq '^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$'; then ok "APPLE_API_ISSUER looks like an Issuer ID."; else bad "APPLE_API_ISSUER must be the Issuer ID (a UUID shown above the Team Keys table)."; api_ok=0; fi
+          if grep -q 'BEGIN PRIVATE KEY' <<< "$P8"; then ok "APPLE_API_KEY_P8 looks like a .p8 key."; else bad "APPLE_API_KEY_P8 must be the full contents of the AuthKey_….p8 file."; api_ok=0; fi
+          if [ "$api_ok" = 1 ]; then
+            printf '%s\n' "$P8" > "$RUNNER_TEMP/AuthKey.p8"
+            if xcrun notarytool history --key "$RUNNER_TEMP/AuthKey.p8" --key-id "$KID" --issuer "$ISS" >/dev/null 2>&1; then
+              ok "Apple accepted the API key — notarization will work."
+            else
+              bad "Apple rejected the API key. The Key ID, Issuer ID and .p8 must all come from the same Team key with Developer access."
+            fi
+          fi
+
+          rm -f "$RUNNER_TEMP/c.p12" "$RUNNER_TEMP/AuthKey.p8"
+          security delete-keychain "$RUNNER_TEMP/check.keychain" >/dev/null 2>&1 || true
+          [ "$fail" = 0 ] && echo "All signing secrets are good." || exit 1

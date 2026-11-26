@@ -41,16 +41,18 @@ jobs:
             # Catch copy-paste mistakes before a 10-minute build (values are never printed).
             KEY_ID="$(printf '%s' "$API_KEY_ID" | tr -d '[:space:]')"
             ISSUER="$(printf '%s' "$API_ISSUER" | tr -d '[:space:]')"
+            bad=0
             if ! printf '%s' "$KEY_ID" | grep -Eq '^[A-Z0-9]{10}$'; then
-              echo "::error::APPLE_API_KEY_ID should be the 10-character Key ID (it is also in the .p8 file name: AuthKey_<KeyID>.p8)."
-              exit 1
+              echo "::error::APPLE_API_KEY_ID should be the 10-character Key ID (it is also in the .p8 file name: AuthKey_<KeyID>.p8)."; bad=1
             fi
             if ! printf '%s' "$ISSUER" | grep -Eiq '^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$'; then
-              echo "::error::APPLE_API_ISSUER should be the Issuer ID UUID shown above the Team Keys table in App Store Connect (Individual keys do not have one)."
-              exit 1
+              echo "::error::APPLE_API_ISSUER should be the Issuer ID UUID shown above the Team Keys table in App Store Connect (Individual keys do not have one)."; bad=1
             fi
             if ! grep -q 'BEGIN PRIVATE KEY' <<< "$APPLE_API_KEY_P8"; then
-              echo "::error::APPLE_API_KEY_P8 does not look like the contents of an AuthKey_*.p8 file."
+              echo "::error::APPLE_API_KEY_P8 does not look like the contents of an AuthKey_*.p8 file."; bad=1
+            fi
+            if [ "$bad" = 1 ]; then
+              echo "::error::Fix the secrets above (run the 'Check signing setup' workflow to test them quickly), then re-run this workflow."
               exit 1
             fi
             echo "APPLE_API_KEY_ID=$KEY_ID" >> "$GITHUB_ENV"
