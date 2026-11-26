@@ -6,6 +6,7 @@ import { renderLarge } from './views/large.js';
 import { renderDupes } from './views/dupes.js';
 import { renderAbout } from './views/about.js';
 import { renderProjects } from './views/projects.js';
+import { renderUninstall } from './views/uninstall.js';
 
 const api = window.silt;
 
@@ -31,6 +32,7 @@ const ROUTES = [
   { id: 'explorer', label: 'Explorer', icon: 'explorer', render: renderExplorer, key: 4 },
   { id: 'large', label: 'Large Files', icon: 'large', render: renderLarge, key: 5 },
   { id: 'dupes', label: 'Duplicates', icon: 'dupes', render: renderDupes, key: 6 },
+  { id: 'uninstall', label: 'Uninstall', icon: 'uninstall', render: renderUninstall, key: 7 },
   { id: 'about', label: 'About', icon: 'about', render: renderAbout },
 ];
 

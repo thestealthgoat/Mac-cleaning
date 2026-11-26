@@ -8,7 +8,8 @@ const { Worker } = require('worker_threads');
 
 const disk = require('../core/disk');
 const { scanHidden, needsFda, measureAll } = require('../core/hidden');
-const { scanPlugins } = require('../core/plugins');
+const { scanPlugins, identifyInstalledPlugins } = require('../core/plugins');
+const uninstall = require('../core/uninstall');
 const { isWithin } = require('../core/paths');
 const { listDir, sizeOf } = require('../core/size');
 const { evaluate, grade } = require('../core/evaluate');
@@ -17,7 +18,7 @@ const { CATALOG } = require('../core/catalog');
 const { checkTrashable, HOME } = require('../core/paths');
 const { formatBytes } = require('../core/format');
 const { buildMarkdownReport } = require('../core/report');
-const { run } = require('../core/exec');
+const { run, pool } = require('../core/exec');
 const { buildMenu, setupAboutPanel } = require('./menu');
 const windowState = require('./window-state');
 
@@ -25,6 +26,9 @@ const isDev = process.argv.includes('--dev');
 let win;
 let lastHidden = null;
 let lastProjects = null;
+let installedApps = null; // cached app list for the Uninstall view
+let pluginInventory = null;
+const plans = new Map(); // appPath → last uninstall plan shown to the user
 const jobs = new Map();
 let jobSeq = 0;
 
@@ -265,6 +269,78 @@ function registerIpc() {
   ipcMain.handle('plugins:scan', async () => {
     const vendors = await scanPlugins({ measure: (p) => measureAll(p), onProgress: (p) => send('job:progress', { mode: 'plugins', ...p, filesSeen: p.done ?? 0, bytesSeen: 0 }) });
     return { vendors, scannedAt: Date.now() };
+  });
+
+  ipcMain.handle('apps:list', async (_e, { refresh } = {}) => {
+    if (!installedApps || refresh) installedApps = await uninstall.listApps();
+    const sizes = await measureAll(installedApps.map((a) => a.path));
+    const iconDir = path.join(app.getPath('userData'), 'app-icons');
+    const limit = pool(6);
+    return Promise.all(installedApps.map((a) => limit(async () => ({ ...a, bytes: sizes.get(a.path)?.bytes ?? 0, icon: await uninstall.appIcon(a, iconDir).catch(() => null) }))));
+  });
+
+  ipcMain.handle('uninstall:plan', async (_e, appPath) => {
+    if (!installedApps) installedApps = await uninstall.listApps();
+    const target = installedApps.find((a) => a.path === appPath);
+    if (!target) throw new Error('Unknown app');
+    if (!pluginInventory) pluginInventory = await identifyInstalledPlugins();
+    const fullDiskAccess = disk.hasFullDiskAccess();
+    const items = uninstall.classify(uninstall.findAppFiles(target, { home: HOME, installed: installedApps, plugins: pluginInventory, fullDiskAccess }));
+    const sizes = await measureAll(items.map((i) => i.path), { excludeNames: fullDiskAccess ? null : ['Containers', 'Group Containers'] });
+    const planned = items.map((i) => {
+      const allowed = uninstall.checkUninstallable(i.path, HOME);
+      return { ...i, bytes: sizes.get(i.path)?.bytes ?? 0, admin: !uninstall.userCanMove(i.path), removable: allowed.ok, blockedReason: allowed.ok ? null : allowed.reason };
+    });
+    const plan = { app: target, items: planned, running: await uninstall.isRunning(target), fullDiskAccess };
+    plans.set(appPath, plan);
+    return plan;
+  });
+
+  ipcMain.handle('uninstall:run', async (_e, { appPath, paths }) => {
+    const plan = plans.get(appPath);
+    if (!plan) throw new Error('Plan the uninstall first');
+    // Only items Silt itself proposed for this app can be removed.
+    const chosen = plan.items.filter((i) => paths.includes(i.path) && i.removable && uninstall.checkUninstallable(i.path, HOME).ok);
+    if (!chosen.length) return { moved: 0, failed: 0, bytes: 0, results: [] };
+    if (await uninstall.isRunning(plan.app)) return { error: `Quit ${plan.app.name} first, then try again.` };
+    const total = chosen.reduce((s, i) => s + i.bytes, 0);
+    const kept = plan.items.filter((i) => !chosen.includes(i) && i.bytes > 0);
+    const keptShared = kept.filter((i) => i.shared.length);
+    const keptDocs = kept.filter((i) => i.category === 'documents');
+    const adminItems = chosen.filter((i) => i.admin);
+    const lines = [`Frees about ${formatBytes(total)}. Everything goes to the Trash, so you can restore it until you empty the Trash.`];
+    if (keptShared.length) lines.push(`Kept because other software uses it: ${keptShared.map((i) => path.basename(i.path)).slice(0, 4).join(', ')}${keptShared.length > 4 ? '…' : ''}.`);
+    if (keptDocs.length) lines.push(`Your documents are kept: ${keptDocs.map((i) => i.path.replace(HOME, '~')).join(', ')}.`);
+    if (adminItems.length) lines.push(`${adminItems.length} system-level item${adminItems.length === 1 ? '' : 's'} need your administrator password; macOS will ask for it.`);
+    const ok = await confirm({
+      message: `Uninstall ${plan.app.name}? ${chosen.length} item${chosen.length === 1 ? '' : 's'}, ${formatBytes(total)}.`,
+      detail: lines.join('\n\n'),
+      okLabel: 'Uninstall',
+      destructive: true,
+    });
+    if (!ok) return { cancelled: true };
+
+    const results = [];
+    for (const i of chosen.filter((x) => !x.admin)) {
+      try {
+        await shell.trashItem(i.path);
+        results.push({ path: i.path, ok: true, bytes: i.bytes });
+      } catch (err) {
+        // Permission surprises fall back to the administrator path.
+        adminItems.push(i);
+      }
+    }
+    if (adminItems.length) {
+      const as = uninstall.adminAppleScript(adminItems.map((i) => i.path), { home: HOME, prompt: `Silt needs your password to move ${plan.app.name}’s system files to the Trash.` });
+      const res = await run('/usr/bin/osascript', ['-e', as], { timeout: 30 * 60 * 1000 });
+      for (const i of adminItems) {
+        const moved = res.code === 0 && !fs.existsSync(i.path);
+        results.push({ path: i.path, ok: moved, bytes: moved ? i.bytes : 0, reason: moved ? null : res.stderr.includes('-128') ? 'Cancelled at the password prompt.' : res.stderr.trim() || 'Could not move' });
+      }
+    }
+    plans.delete(appPath);
+    if (results.some((r) => r.ok && r.path === plan.app.path)) installedApps = installedApps.filter((a) => a.path !== plan.app.path);
+    return { results, moved: results.filter((r) => r.ok).length, failed: results.filter((r) => !r.ok).length, bytes: results.reduce((s, r) => s + (r.ok ? r.bytes : 0), 0) };
   });
 
   ipcMain.handle('job:cancel', async () => {

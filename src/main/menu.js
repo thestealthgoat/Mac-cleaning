@@ -12,6 +12,7 @@ const VIEWS = [
   ['explorer', 'Explorer'],
   ['large', 'Large Files'],
   ['dupes', 'Duplicates'],
+  ['uninstall', 'Uninstall'],
 ];
 
 function setupAboutPanel() {
@@ -50,6 +51,7 @@ function buildMenu({ send, isDev }) {
       submenu: [
         { label: 'Rescan', accelerator: 'CmdOrCtrl+R', click: () => send('menu', { action: 'rescan' }) },
         { label: 'Export Report…', accelerator: 'CmdOrCtrl+E', click: () => send('menu', { action: 'export' }) },
+        { label: 'Uninstall an App…', accelerator: 'CmdOrCtrl+U', click: () => send('menu', { action: 'go', route: 'uninstall' }) },
         { type: 'separator' },
         { role: 'close' },
       ],

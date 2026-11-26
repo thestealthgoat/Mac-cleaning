@@ -231,4 +231,18 @@ async function scanPlugins({ home = os.homedir(), measure, onProgress } = {}) {
     .sort((a, b) => b.bytes - a.bytes);
 }
 
-module.exports = { scanPlugins, identify, vendorKey, listBundles, KNOWN_AUDIO_VENDORS };
+/** Lightweight inventory (no sizes): one entry per product with its bundle paths. */
+async function identifyInstalledPlugins({ home = os.homedir() } = {}) {
+  const bundles = pluginDirs(home).flatMap((d) => listBundles(d));
+  const limit = pool(8);
+  const found = await Promise.all(bundles.map((b) => limit(async () => ({ ...b, ...identify(b, await readPlist(path.join(b.path, 'Contents', 'Info.plist'))) }))));
+  const byProduct = new Map();
+  for (const p of found) {
+    const k = `${vendorKey(p.vendor)}\0${p.product.toLowerCase()}`;
+    if (!byProduct.has(k)) byProduct.set(k, { vendor: p.vendor, idVendor: p.idVendor, name: p.product, paths: [] });
+    byProduct.get(k).paths.push(p.path);
+  }
+  return [...byProduct.values()];
+}
+
+module.exports = { scanPlugins, identifyInstalledPlugins, identify, vendorKey, listBundles, KNOWN_AUDIO_VENDORS };

@@ -23,10 +23,17 @@ module.exports = async function snapAll(win, app, dir) {
   // Wait for the System Data scan to finish (the Rescan button re-enables).
   await waitFor(win, `[...document.querySelectorAll('.view-head .btn')].some(b => b.textContent.includes('Rescan') && !b.disabled)`, 180000);
   await wait(800);
-  const routes = ['overview', 'hidden', 'projects', 'explorer', 'large', 'dupes', 'about'];
+  const routes = ['overview', 'hidden', 'projects', 'explorer', 'large', 'dupes', 'uninstall', 'about'];
+  const only = process.env.SILT_SNAP_ONLY ? process.env.SILT_SNAP_ONLY.split(',') : null;
   for (let i = 0; i < routes.length; i++) {
+    if (only && !only.includes(routes[i])) continue;
     await win.webContents.executeJavaScript(`document.querySelectorAll('.nav-item')[${i}].click()`);
     if (routes[i] === 'explorer') await waitFor(win, `!!document.querySelector('.tile')`, 120000);
+    if (routes[i] === 'uninstall') {
+      await waitFor(win, `!!document.querySelector('.app-item')`, 120000);
+      await win.webContents.executeJavaScript(`(() => { const s = document.querySelector('input.search'); s.value = 'mainstage'; s.dispatchEvent(new Event('input')); s.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' })); })()`);
+      await waitFor(win, `!!document.querySelector('.uninstall-bar')`, 180000);
+    }
     if (routes[i] === 'projects') {
       await waitFor(win, `!!document.querySelector('.project-row')`, 240000);
       for (const [n, tab] of [[1, 'media'], [2, 'plugins']]) {

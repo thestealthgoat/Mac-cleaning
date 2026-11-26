@@ -29,6 +29,7 @@ macOS’s Storage settings dump everything they can’t classify into one big gr
   - **Code**: every Git/Node/Python/Rust/Swift/Xcode/… project with its size, last activity and how much is rebuildable (`node_modules`, `.venv`, `target`, `.next`, Pods, git-ignored build output, and Xcode DerivedData traced back to its project). One click moves the rebuildable parts of a stale project to the Trash.
   - **Music & live**: Logic, GarageBand, Ableton Live, Studio One, Pro Tools, Cubase, Nuendo, REAPER, FL Studio, Bitwig and Reason sessions grouped into project folders with their versions, backups and caches; MainStage concerts and Gig Performer rigs; ProPresenter libraries. Online-only cloud sessions are labelled.
   - **Plug-ins & libraries**: every AU, VST, VST3, AAX and CLAP plug-in grouped by vendor, with each vendor’s sound libraries and support folders attached — plus libraries from vendors whose plug-ins are no longer installed.
+- **Smart Uninstall** — type an app’s name (or press ⌘U) and Silt finds the app plus its support data, caches, preferences, saved state, logs, background helpers and sandbox containers, with the space each one frees. Content shared with other installed software (e.g. Apple’s sound library used by Logic Pro *and* MainStage, or a vendor folder your plug-ins still need) is flagged and kept by default, and your own documents are never selected for you. System-owned files go to the Trash through macOS’s own password prompt.
 - **The parts macOS hides** — APFS volumes (Preboot, VM/swap, Recovery, Update), purgeable space, and local Time Machine / update snapshots.
 - **Explorer** — drill down through any folder with a live treemap; sizes stream in as they’re measured.
 - **Large Files** — the biggest files anywhere in your home folder, filterable by size and how long since they were touched.
@@ -94,6 +95,7 @@ src/
     paths.js       glob expansion and the deny list
     projects.js    project detection: code markers, rebuildable folders, DAW sessions, rigs
     plugins.js     plug-in identification and vendor ↔ library matching
+    uninstall.js   app file discovery, shared-content detection, admin-safe moves
     walk-worker.js worker thread for Large Files, Duplicates and Projects
     apps.js        installed-app index for leftover detection
     report.js      Markdown report
@@ -106,7 +108,8 @@ Sizes are measured with the system `du` (allocated blocks, hard links counted on
 
 | | |
 | --- | --- |
-| <kbd>⌘1</kbd>–<kbd>⌘6</kbd> | Overview, System Data, Projects, Explorer, Large Files, Duplicates |
+| <kbd>⌘1</kbd>–<kbd>⌘7</kbd> | Overview, System Data, Projects, Explorer, Large Files, Duplicates, Uninstall |
+| <kbd>⌘U</kbd> | Uninstall an app |
 | <kbd>⌘R</kbd> | Rescan |
 | <kbd>⌘E</kbd> | Export report |
 

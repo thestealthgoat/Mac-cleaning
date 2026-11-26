@@ -1,0 +1,236 @@
+import { h, bytes, icon, button, busy, viewHead, tilde, toast } from '../ui.js';
+
+const ui = { query: '', apps: null, loading: false, selected: null, plan: null, planning: false, checked: new Set(), openGroups: new Set() };
+
+const GROUP_ORDER = ['app', 'support', 'caches', 'prefs', 'state', 'containers', 'logs', 'launch', 'shared', 'vendor', 'plugins', 'documents'];
+
+export function renderUninstall(ctx) {
+  const { api } = ctx;
+  if (!ui.apps && !ui.loading) loadApps(ctx);
+
+  const search = h('input', {
+    type: 'text',
+    class: 'search',
+    placeholder: 'Uninstall… type an app name, e.g. MainStage',
+    value: ui.query,
+    oninput: (e) => {
+      ui.query = e.target.value;
+      paintList(ctx);
+    },
+    onkeydown: (e) => {
+      if (e.key === 'Enter') {
+        const first = filtered()[0];
+        if (first) select(first, ctx);
+      }
+    },
+  });
+  requestAnimationFrame(() => {
+    if (!ui.selected) search.focus();
+  });
+
+  const list = h('div', { class: 'app-list', id: 'app-list' });
+  const detail = h('div', { class: 'app-detail', id: 'app-detail' });
+  const view = h(
+    'div',
+    {},
+    viewHead('Uninstall', 'Remove an app together with everything it left around your Mac. Files other software still needs, and your own documents, are kept unless you choose otherwise.'),
+    h('div', { class: 'uninstall-grid' }, h('div', { class: 'card app-col' }, search, list), detail),
+  );
+  requestAnimationFrame(() => {
+    paintList(ctx);
+    paintDetail(ctx);
+  });
+  return view;
+}
+
+async function loadApps(ctx, refresh = false) {
+  ui.loading = true;
+  try {
+    ui.apps = await ctx.api.listApps({ refresh });
+  } finally {
+    ui.loading = false;
+  }
+  if (ctx.state.route === 'uninstall') {
+    paintList(ctx);
+    // "uninstall mainstage" with a single match: open it straight away.
+    const f = filtered();
+    if (!ui.selected && ui.query && f.length === 1) select(f[0], ctx);
+  }
+}
+
+function filtered() {
+  const q = ui.query.trim().toLowerCase().replace(/^uninstall\s+/, '');
+  const apps = ui.apps || [];
+  if (!q) return [...apps].sort((a, b) => b.bytes - a.bytes);
+  return apps
+    .filter((a) => a.name.toLowerCase().includes(q) || a.fileName.toLowerCase().includes(q) || a.id.toLowerCase().includes(q))
+    .sort((a, b) => Number(!a.name.toLowerCase().startsWith(q)) - Number(!b.name.toLowerCase().startsWith(q)) || b.bytes - a.bytes);
+}
+
+function paintList(ctx) {
+  const el = document.getElementById('app-list');
+  if (!el) return;
+  if (!ui.apps) {
+    el.replaceChildren(...Array.from({ length: 8 }, () => h('div', { class: 'skeleton', style: { height: '40px', margin: '6px 0' } })));
+    return;
+  }
+  const apps = filtered();
+  if (!apps.length) {
+    el.replaceChildren(h('div', { class: 'empty', style: { padding: '24px 8px' } }, h('p', {}, `No app matches “${ui.query}”.`)));
+    return;
+  }
+  el.replaceChildren(
+    ...apps.map((a) =>
+      h(
+        'button',
+        { class: `app-item ${ui.selected?.path === a.path ? 'active' : ''}`, onclick: () => select(a, ctx), title: tilde(a.path) },
+        a.icon ? h('img', { src: a.icon, alt: '' }) : icon('package', 'app-fallback'),
+        h('span', { class: 'app-name' }, a.name, a.version ? h('i', {}, a.version) : null),
+        h('span', { class: 'size' }, bytes(a.bytes)),
+      ),
+    ),
+  );
+}
+
+async function select(app, ctx) {
+  ui.selected = app;
+  ui.plan = null;
+  ui.planning = true;
+  paintList(ctx);
+  paintDetail(ctx);
+  try {
+    const plan = await ctx.api.planUninstall(app.path);
+    if (ui.selected?.path !== app.path) return;
+    ui.plan = plan;
+    ui.checked = new Set(plan.items.filter((i) => i.checked && i.removable).map((i) => i.path));
+  } catch (err) {
+    toast(`Couldn’t inspect ${app.name}: ${err.message}`);
+  } finally {
+    ui.planning = false;
+    paintDetail(ctx);
+  }
+}
+
+function paintDetail(ctx) {
+  const el = document.getElementById('app-detail');
+  if (!el) return;
+  const a = ui.selected;
+  if (!a) {
+    el.replaceChildren(h('div', { class: 'card empty' }, icon('uninstall', 'empty-icon'), h('h3', {}, 'Choose an app'), h('p', {}, 'Silt finds its support files, caches, preferences, background helpers and shared content, and tells you what is safe to remove.')));
+    return;
+  }
+  const head = h(
+    'div',
+    { class: 'app-head' },
+    a.icon ? h('img', { src: a.icon, alt: '' }) : null,
+    h('div', { class: 'grow' }, h('h3', {}, a.name), h('div', { class: 'faint' }, [a.version && `Version ${a.version}`, a.fromAppStore && 'App Store', tilde(a.path)].filter(Boolean).join(' · '))),
+  );
+  if (ui.planning || !ui.plan) {
+    el.replaceChildren(h('div', { class: 'card' }, head, h('div', { class: 'muted', style: { marginTop: 14 } }, `Finding everything that belongs to ${a.name}…`), h('div', { class: 'progress indeterminate' }, h('div'))));
+    return;
+  }
+  const plan = ui.plan;
+  const items = plan.items.filter((i) => i.bytes > 0 || i.category === 'app' || i.category === 'prefs');
+  const byCat = GROUP_ORDER.map((c) => ({ c, items: items.filter((i) => i.category === c) })).filter((g) => g.items.length);
+  const chosen = items.filter((i) => ui.checked.has(i.path));
+  const total = chosen.reduce((s, i) => s + i.bytes, 0);
+  const keptShared = items.filter((i) => !ui.checked.has(i.path) && i.shared.length).reduce((s, i) => s + i.bytes, 0);
+  const keptDocs = items.filter((i) => !ui.checked.has(i.path) && i.category === 'documents').reduce((s, i) => s + i.bytes, 0);
+  const needsPassword = chosen.some((i) => i.admin);
+
+  const run = button(`Uninstall ${a.name}`, { kind: 'primary danger-fill', iconName: 'trash', disabled: !chosen.length || plan.running });
+  run.onclick = busy(run, async () => {
+    const res = await ctx.api.runUninstall({ appPath: a.path, paths: chosen.map((i) => i.path) });
+    if (!res || res.cancelled) return;
+    if (res.error) return toast(res.error, 5000);
+    const failed = res.results.filter((r) => !r.ok);
+    toast(failed.length ? `Moved ${res.moved} items (${bytes(res.bytes)}) to the Trash. ${failed.length} couldn’t be moved: ${failed[0].reason}` : `${a.name} uninstalled — ${bytes(res.bytes)} moved to the Trash. Empty the Trash to free the space.`, 7000);
+    ui.selected = null;
+    ui.plan = null;
+    await loadApps(ctx, true);
+    paintDetail(ctx);
+    ctx.runHiddenScan();
+  });
+
+  el.replaceChildren(
+    h(
+      'div',
+      { class: 'card' },
+      head,
+      plan.running ? h('div', { class: 'banner', style: { margin: '14px 0 0' } }, h('div', { class: 'grow' }, h('b', {}, `${a.name} is running. `), 'Quit it before uninstalling.')) : null,
+      !plan.fullDiskAccess ? h('div', { class: 'faint', style: { marginTop: 10 } }, 'Without Full Disk Access, sandbox containers can’t be checked, so a few small files may be missed.') : null,
+      ...byCat.map(({ c, items: list }) => group(c, list, ctx)),
+    ),
+    h(
+      'div',
+      { class: 'card uninstall-bar' },
+      h(
+        'div',
+        { class: 'grow' },
+        h('div', { class: 'bar-total' }, `Frees ${bytes(total)}`, h('span', { class: 'faint' }, ` · ${chosen.length} item${chosen.length === 1 ? '' : 's'} to the Trash`)),
+        h(
+          'div',
+          { class: 'faint' },
+          [keptShared && `Keeps ${bytes(keptShared)} other software still uses`, keptDocs && `keeps your ${bytes(keptDocs)} of documents`, needsPassword && 'macOS will ask for your password for system files'].filter(Boolean).join(' · ') || 'Nothing shared or personal is affected.',
+        ),
+      ),
+      run,
+    ),
+  );
+}
+
+function group(category, list, ctx) {
+  const { api } = ctx;
+  const label = list[0].label;
+  const sum = list.reduce((s, i) => s + i.bytes, 0);
+  const many = list.length > 6;
+  const open = !many || ui.openGroups.has(category);
+  const shown = open ? list : list.slice(0, 4);
+  const allChecked = list.every((i) => ui.checked.has(i.path) || !i.removable);
+  const toggleAll = h('input', {
+    type: 'checkbox',
+    checked: allChecked,
+    onchange: (e) => {
+      for (const i of list) if (i.removable) e.target.checked ? ui.checked.add(i.path) : ui.checked.delete(i.path);
+      paintDetail(ctx);
+    },
+  });
+  return h(
+    'div',
+    { class: 'un-group' },
+    h('div', { class: 'un-group-head' }, toggleAll, h('b', {}, label), h('span', { class: 'faint' }, `${list.length} · ${bytes(sum)}`)),
+    ...shown.map((i) =>
+      h(
+        'label',
+        { class: `un-item ${i.removable ? '' : 'disabled'}` },
+        h('input', {
+          type: 'checkbox',
+          checked: ui.checked.has(i.path),
+          disabled: !i.removable,
+          onchange: (e) => {
+            e.target.checked ? ui.checked.add(i.path) : ui.checked.delete(i.path);
+            paintDetail(ctx);
+          },
+        }),
+        h(
+          'div',
+          { class: 'un-text' },
+          h('div', { class: 'mono', title: i.path }, i.pluginName || tilde(i.path)),
+          i.note || i.blockedReason ? h('div', { class: `un-note ${i.shared.length ? 'shared' : ''}` }, i.blockedReason ? `Can’t be removed by Silt: ${i.blockedReason}` : i.note) : null,
+        ),
+        i.admin ? h('span', { class: 'pill lock tag', title: 'Owned by the system; macOS will ask for your password.' }, 'Password') : null,
+        i.shared.length ? h('span', { class: 'pill review tag' }, 'Shared') : null,
+        h('span', { class: 'size' }, bytes(i.bytes)),
+        button('', { kind: 'ghost small', iconName: 'reveal', title: 'Show in Finder', onClick: (e) => (e.preventDefault(), api.reveal(i.path)) }),
+      ),
+    ),
+    !open ? button(`Show all ${list.length}`, { kind: 'ghost small', onClick: () => (ui.openGroups.add(category), paintDetail(ctx)) }) : null,
+  );
+}
+
+/** Pre-fill the search (e.g. from "uninstall mainstage"). */
+export function setUninstallQuery(q) {
+  ui.query = q;
+  ui.selected = null;
+  ui.plan = null;
+}
