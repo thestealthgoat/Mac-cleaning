@@ -1,0 +1,84 @@
+{
+  "name": "silt",
+  "productName": "Silt",
+  "version": "0.1.0",
+  "description": "Open-source macOS storage analyzer and cleaner that explains where your space went \u2014 including the hidden 'System Data'.",
+  "main": "src/main/main.js",
+  "license": "MIT",
+  "author": "Silt contributors",
+  "homepage": "https://github.com/thestealthgoat/Mac-cleaning",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/thestealthgoat/Mac-cleaning.git"
+  },
+  "bugs": {
+    "url": "https://github.com/thestealthgoat/Mac-cleaning/issues"
+  },
+  "keywords": [
+    "macos",
+    "disk",
+    "storage",
+    "cleaner",
+    "system-data",
+    "electron"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "os": [
+    "darwin"
+  ],
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "test": "node --test test/",
+    "lint": "node scripts/check-syntax.js",
+    "dist": "electron-builder --mac --publish never",
+    "dist:dir": "electron-builder --mac dir --publish never",
+    "snap": "SILT_SNAP_DIR=docs/screenshots electron ."
+  },
+  "build": {
+    "appId": "io.github.silt.app",
+    "productName": "Silt",
+    "files": [
+      "src/**/*",
+      "package.json",
+      "LICENSE",
+      "!src/main/dev-snapshots.js"
+    ],
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "mac": {
+      "category": "public.app-category.utilities",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "identity": null,
+      "icon": "build/icon.png"
+    },
+    "dmg": {
+      "title": "Silt ${version}"
+    }
+  },
+  "devDependencies": {
+    "electron": "^45.5.0",
+    "electron-builder": "^26.18.0"
+  }
+}
