@@ -52,7 +52,7 @@ Silt is designed so you can’t hurt your Mac with it:
 
 Download the latest `.dmg` from [**Releases**](https://github.com/thestealthgoat/Mac-cleaning/releases). Pick `arm64` for Apple Silicon or `x64` for Intel Macs.
 
-Builds are currently unsigned, so macOS blocks the first launch. Open Silt once, then go to *System Settings › Privacy & Security*, scroll down and click **Open Anyway**. (On macOS 14 and earlier, right-click **Silt.app → Open** also works.) Or remove the quarantine flag in Terminal:
+Signed, notarized releases open normally. If a release is marked *unsigned*, macOS blocks the first launch: Open Silt once, then go to *System Settings › Privacy & Security*, scroll down and click **Open Anyway**. (On macOS 14 and earlier, right-click **Silt.app → Open** also works.) Or remove the quarantine flag in Terminal:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/Silt.app
@@ -69,8 +69,10 @@ git clone https://github.com/thestealthgoat/Mac-cleaning.git silt && cd silt
 npm install
 npm start          # run the app
 npm test           # unit tests (node:test, no extra dependencies)
-npm run dist       # build .dmg and .zip into dist/
+npm run dist       # build .dmg and .zip into dist/ (signed if a Developer ID is in your keychain)
 ```
+
+Code signing and notarization are set up in CI; see [docs/SIGNING.md](docs/SIGNING.md).
 
 While developing, macOS attributes file access to the app that launched Electron — grant Full Disk Access to your terminal if you want protected folders measured.
 

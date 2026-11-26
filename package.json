@@ -36,7 +36,8 @@
     "dist": "electron-builder --mac --publish never",
     "dist:dir": "electron-builder --mac dir --publish never",
     "snap": "SILT_SNAP_DIR=docs/screenshots electron .",
-    "art": "electron scripts/make-art.js"
+    "art": "electron scripts/make-art.js",
+    "dist:unsigned": "CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --publish never -c.mac.notarize=false"
   },
   "build": {
     "appId": "io.github.thestealthgoat.silt",
@@ -71,13 +72,16 @@
       ],
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
-      "identity": null,
       "icon": "build/icon.icns",
       "minimumSystemVersion": "12.0",
       "extendInfo": {
         "NSHumanReadableCopyright": "Copyright © 2026 Silt contributors. MIT License.",
-        "LSApplicationCategoryType": "public.app-category.utilities"
-      }
+        "LSApplicationCategoryType": "public.app-category.utilities",
+        "NSAppleEventsUsageDescription": "Silt uses Terminal to run the cleanup commands you choose, and Finder to empty the Trash when you ask it to."
+      },
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": true
     },
     "dmg": {
       "title": "Install Silt",
