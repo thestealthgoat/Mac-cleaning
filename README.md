@@ -50,7 +50,9 @@ Silt is designed so you can’t hurt your Mac with it:
 
 ## Install
 
-Download the latest `.dmg` from [**Releases**](https://github.com/thestealthgoat/Mac-cleaning/releases). Builds are currently unsigned: the first time, right-click **Silt.app → Open**, or run:
+Download the latest `.dmg` from [**Releases**](https://github.com/thestealthgoat/Mac-cleaning/releases). Pick `arm64` for Apple Silicon or `x64` for Intel Macs.
+
+Builds are currently unsigned, so macOS blocks the first launch. Open Silt once, then go to *System Settings › Privacy & Security*, scroll down and click **Open Anyway**. (On macOS 14 and earlier, right-click **Silt.app → Open** also works.) Or remove the quarantine flag in Terminal:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/Silt.app
