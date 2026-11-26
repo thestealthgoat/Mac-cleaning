@@ -1,4 +1,4 @@
-import { h, button, viewHead } from '../ui.js';
+import { h, button } from '../ui.js';
 
 let info = null;
 
@@ -17,10 +17,22 @@ export function renderAbout(ctx) {
       h('dd', {}, o ? `${o.machine.model} · macOS ${o.machine.macos} · ${o.machine.arch}` : '…'),
     );
   fill();
-  if (!info) api.info().then((i) => ((info = i), fill()));
+  if (!info) api.info().then((i) => ((info = i), fill(), ctx.state.route === 'about' && ctx.render()));
 
   root.append(
-    viewHead('About Silt', 'A free, open-source storage analyzer and cleaner for macOS.'),
+    h(
+      'div',
+      { class: 'card welcome', style: { marginBottom: '16px' } },
+      h('img', { src: 'assets/icon.png', alt: '', style: { animation: 'none' } }),
+      h(
+        'div',
+        { class: 'grow' },
+        h('h3', { style: { fontSize: '22px' } }, 'Silt'),
+        h('p', {}, 'Storage, explained. A free, open-source storage analyzer and cleaner for macOS.'),
+        h('div', { class: 'steps' }, h('span', {}, info ? `Version ${info.version}` : 'Version …'), h('span', {}, 'MIT License'), h('span', {}, 'No tracking, no network')),
+      ),
+      button('View on GitHub', { onClick: () => api.openUrl('https://github.com/thestealthgoat/Mac-cleaning') }),
+    ),
     h(
       'div',
       { class: 'grid two' },

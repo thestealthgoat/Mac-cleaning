@@ -16,6 +16,8 @@ const { checkTrashable, HOME } = require('../core/paths');
 const { formatBytes } = require('../core/format');
 const { buildMarkdownReport } = require('../core/report');
 const { run } = require('../core/exec');
+const { buildMenu, setupAboutPanel } = require('./menu');
+const windowState = require('./window-state');
 
 const isDev = process.argv.includes('--dev');
 let win;
@@ -30,10 +32,12 @@ const ALLOWED_COMMANDS = new Set([
   'tmutil thinlocalsnapshots / 999999999999 4',
 ]);
 
+app.setName('Silt');
+
 function createWindow() {
+  const bounds = windowState.load({ width: 1240, height: 800 });
   win = new BrowserWindow({
-    width: 1240,
-    height: 800,
+    ...bounds,
     minWidth: 980,
     minHeight: 640,
     title: 'Silt',
@@ -52,6 +56,7 @@ function createWindow() {
     },
   });
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+  windowState.track(win);
   win.once('ready-to-show', () => {
     win.show();
     if (process.env.SILT_SNAP_DIR) require('./dev-snapshots')(win, app, process.env.SILT_SNAP_DIR);
@@ -69,7 +74,19 @@ function createWindow() {
   win.webContents.on('will-navigate', (e) => e.preventDefault());
 }
 
+// One window, one instance: a second launch just focuses the existing window.
+if (!app.requestSingleInstanceLock()) app.quit();
+app.on('second-instance', () => {
+  if (win) {
+    if (win.isMinimized()) win.restore();
+    win.focus();
+  }
+});
+
 app.whenReady().then(() => {
+  setupAboutPanel();
+  buildMenu({ send, isDev });
+  if (!app.isPackaged && app.dock) app.dock.setIcon(path.join(__dirname, '..', '..', 'build', 'icon.png'));
   registerIpc();
   createWindow();
   app.on('activate', () => {

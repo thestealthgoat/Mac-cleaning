@@ -33,4 +33,5 @@ contextBridge.exposeInMainWorld('silt', {
   info: invoke('app:info'),
   onHiddenProgress: (fn) => on('hidden:progress', fn),
   onJobProgress: (fn) => on('job:progress', fn),
+  onMenu: (fn) => on('menu', fn),
 });

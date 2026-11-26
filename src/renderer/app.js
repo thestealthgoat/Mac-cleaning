@@ -1,4 +1,4 @@
-import { h, icon, bytes, setHome } from './ui.js';
+import { h, icon, bytes, setHome, toast } from './ui.js';
 import { renderOverview } from './views/overview.js';
 import { renderHidden } from './views/hidden.js';
 import { renderExplorer } from './views/explorer.js';
@@ -22,11 +22,11 @@ export const state = {
 };
 
 const ROUTES = [
-  { id: 'overview', label: 'Overview', icon: 'overview', render: renderOverview },
-  { id: 'hidden', label: 'System Data', icon: 'hidden', render: renderHidden },
-  { id: 'explorer', label: 'Explorer', icon: 'explorer', render: renderExplorer },
-  { id: 'large', label: 'Large Files', icon: 'large', render: renderLarge },
-  { id: 'dupes', label: 'Duplicates', icon: 'dupes', render: renderDupes },
+  { id: 'overview', label: 'Overview', icon: 'overview', render: renderOverview, key: 1 },
+  { id: 'hidden', label: 'System Data', icon: 'hidden', render: renderHidden, key: 2 },
+  { id: 'explorer', label: 'Explorer', icon: 'explorer', render: renderExplorer, key: 3 },
+  { id: 'large', label: 'Large Files', icon: 'large', render: renderLarge, key: 4 },
+  { id: 'dupes', label: 'Duplicates', icon: 'dupes', render: renderDupes, key: 5 },
   { id: 'about', label: 'About', icon: 'about', render: renderAbout },
 ];
 
@@ -40,8 +40,11 @@ export function go(route, opts = {}) {
 export function render() {
   const view = document.getElementById('view');
   const r = ROUTES.find((x) => x.id === state.route) || ROUTES[0];
-  const scroll = view.dataset.route === r.id ? view.scrollTop : 0;
-  view.replaceChildren(r.render({ api, state, go, render, refreshOverview, runHiddenScan }));
+  const same = view.dataset.route === r.id;
+  const scroll = same ? view.scrollTop : 0;
+  const node = r.render({ api, state, go, render, refreshOverview, runHiddenScan });
+  if (!same) node.classList.add('view-enter'); // animate only when switching screens
+  view.replaceChildren(node);
   view.dataset.route = r.id;
   view.scrollTop = scroll;
 }
@@ -55,7 +58,7 @@ function renderNav() {
       if (r.id === 'hidden' && state.hiddenScanning) badge = '…';
       return h(
         'button',
-        { class: `nav-item ${state.route === r.id ? 'active' : ''}`, onclick: () => go(r.id) },
+        { class: `nav-item ${state.route === r.id ? 'active' : ''}`, onclick: () => go(r.id), title: r.key ? `${r.label}  ⌘${r.key}` : r.label },
         icon(r.icon),
         h('span', {}, r.label),
         badge ? h('span', { class: 'badge' }, badge) : null,
@@ -110,6 +113,15 @@ api.onJobProgress((p) => {
   }
   const cur = document.querySelector('[data-job-current]');
   if (cur && p.current) cur.textContent = p.current.replace(state.overview?.home ?? '', '~');
+});
+
+api.onMenu(async (m) => {
+  if (m.action === 'go') go(m.route);
+  else if (m.action === 'rescan') runHiddenScan();
+  else if (m.action === 'export') {
+    const r = await api.exportReport();
+    if (r?.ok) toast('Report saved.');
+  }
 });
 
 renderNav();

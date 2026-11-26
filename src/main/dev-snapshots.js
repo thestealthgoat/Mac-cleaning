@@ -17,6 +17,7 @@ async function waitFor(win, expr, timeoutMs) {
 }
 
 module.exports = async function snapAll(win, app, dir) {
+  if (process.env.SILT_THEME) require('electron').nativeTheme.themeSource = process.env.SILT_THEME;
   fs.mkdirSync(dir, { recursive: true });
   await waitFor(win, `!!document.querySelector('.ring')`, 30000);
   // Wait for the System Data scan to finish (the Rescan button re-enables).

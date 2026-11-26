@@ -4,7 +4,12 @@ export function renderOverview(ctx) {
   const { api, state } = ctx;
   const o = state.overview;
   if (!o) {
-    return h('div', {}, viewHead('Overview', 'Reading your disk…'), h('div', { class: 'progress indeterminate' }, h('div')));
+    return h(
+      'div',
+      {},
+      viewHead('Overview', 'Reading your disk…'),
+      h('div', { class: 'grid hero' }, h('div', { class: 'card' }, h('div', { class: 'skeleton', style: { height: '210px' } })), h('div', { class: 'card' }, h('div', { class: 'skeleton', style: { height: '28px', width: '40%', marginBottom: '18px' } }), h('div', { class: 'skeleton', style: { height: '22px', marginBottom: '14px' } }), h('div', { class: 'skeleton', style: { height: '14px', width: '70%' } }))),
+    );
   }
   const c = o.capacity;
   const exportBtn = button('Export report', { iconName: 'export' });
@@ -107,7 +112,19 @@ function findingsList(ctx) {
   const o = state.overview;
   const findings = o.evaluation.findings;
   if (state.hiddenScanning && !state.hidden) {
-    return h('div', {}, h('div', { class: 'muted' }, 'Scanning for hidden data…'), h('div', { class: 'progress' }, h('div', { 'data-hidden-progress': '', style: { width: '5%' } })));
+    return h(
+      'div',
+      { class: 'welcome' },
+      h('img', { src: 'assets/icon.png', alt: '' }),
+      h(
+        'div',
+        { class: 'grow' },
+        h('h3', {}, 'Analyzing your Mac…'),
+        h('p', {}, 'Silt is measuring the places macOS hides data. This usually takes under a minute, and nothing is changed.'),
+        h('div', { class: 'progress' }, h('div', { 'data-hidden-progress': '', style: { width: '5%' } })),
+        h('div', { class: 'steps' }, h('span', {}, 'Caches & logs'), h('span', {}, 'Developer tools'), h('span', {}, 'Backups & media'), h('span', {}, 'Leftover app data')),
+      ),
+    );
   }
   if (!findings.length) return h('div', { class: 'empty' }, h('h3', {}, 'Looking good'), h('p', {}, 'Nothing stands out. Explore the System Data tab for details.'));
   return h(
