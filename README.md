@@ -56,7 +56,7 @@ For full results, grant Silt **Full Disk Access** in *System Settings › Privac
 
 ## Build from source
 
-Requires macOS and Node.js 20+.
+Requires macOS and Node.js 22+.
 
 ```bash
 git clone https://github.com/thestealthgoat/Mac-cleaning.git silt && cd silt
