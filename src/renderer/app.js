@@ -5,6 +5,7 @@ import { renderExplorer } from './views/explorer.js';
 import { renderLarge } from './views/large.js';
 import { renderDupes } from './views/dupes.js';
 import { renderAbout } from './views/about.js';
+import { renderProjects } from './views/projects.js';
 
 const api = window.silt;
 
@@ -17,6 +18,8 @@ export const state = {
   explorerPath: null,
   large: null,
   dupes: null,
+  projects: null,
+  plugins: null,
   jobProgress: null,
   route: 'overview',
 };
@@ -24,9 +27,10 @@ export const state = {
 const ROUTES = [
   { id: 'overview', label: 'Overview', icon: 'overview', render: renderOverview, key: 1 },
   { id: 'hidden', label: 'System Data', icon: 'hidden', render: renderHidden, key: 2 },
-  { id: 'explorer', label: 'Explorer', icon: 'explorer', render: renderExplorer, key: 3 },
-  { id: 'large', label: 'Large Files', icon: 'large', render: renderLarge, key: 4 },
-  { id: 'dupes', label: 'Duplicates', icon: 'dupes', render: renderDupes, key: 5 },
+  { id: 'projects', label: 'Projects', icon: 'projects', render: renderProjects, key: 3 },
+  { id: 'explorer', label: 'Explorer', icon: 'explorer', render: renderExplorer, key: 4 },
+  { id: 'large', label: 'Large Files', icon: 'large', render: renderLarge, key: 5 },
+  { id: 'dupes', label: 'Duplicates', icon: 'dupes', render: renderDupes, key: 6 },
   { id: 'about', label: 'About', icon: 'about', render: renderAbout },
 ];
 
@@ -105,11 +109,19 @@ api.onHiddenProgress((p) => {
   if (bar) bar.style.width = `${(p.done / p.total) * 100}%`;
 });
 
+function progressText(p) {
+  const n = (x) => (x ?? 0).toLocaleString();
+  if (p.mode === 'projects') return p.phase === 'sizes' ? `${n(p.filesSeen)} folders checked · measuring project sizes…` : `${n(p.filesSeen)} folders checked`;
+  if (p.mode === 'plugins') return p.phase === 'sizes' ? 'Measuring sound libraries…' : `${n(p.done)} of ${n(p.total)} plug-ins identified`;
+  const hashing = p.phase === 'quick-hash' || p.phase === 'full-hash' ? ` · comparing ${n(p.hashed)} candidates` : '';
+  return `${n(p.filesSeen)} files · ${bytes(p.bytesSeen ?? 0)} scanned${hashing}`;
+}
+
 api.onJobProgress((p) => {
   state.jobProgress = p;
   const el = document.querySelector('[data-job-progress]');
   if (el) {
-    el.textContent = `${p.filesSeen.toLocaleString()} files · ${bytes(p.bytesSeen)} scanned${p.phase ? ` · comparing ${p.hashed.toLocaleString()} candidates` : ''}`;
+    el.textContent = progressText(p);
   }
   const cur = document.querySelector('[data-job-current]');
   if (cur && p.current) cur.textContent = p.current.replace(state.overview?.home ?? '', '~');

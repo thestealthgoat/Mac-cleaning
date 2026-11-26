@@ -27,6 +27,15 @@
 const CATALOG = [
   // ───────────── Caches ─────────────
   {
+    id: 'relocated-items',
+    name: 'Relocated Items from macOS upgrades',
+    group: 'system',
+    paths: ['/Users/Shared/Relocated Items*', '/Users/Shared/Previously Relocated Items*'],
+    safety: 'review',
+    action: 'trash-paths',
+    why: 'Files macOS moved aside during upgrades because they were modified or no longer fit the new system. Each upgrade adds another folder. Glance inside, then remove them if nothing looks important.',
+  },
+  {
     id: 'user-caches',
     name: 'App caches',
     group: 'caches',

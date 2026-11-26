@@ -17,6 +17,8 @@ contextBridge.exposeInMainWorld('silt', {
   sizeOf: invoke('explore:size'),
   scanLarge: invoke('large:scan'),
   scanDupes: invoke('dupes:scan'),
+  scanProjects: invoke('projects:scan'),
+  scanPlugins: invoke('plugins:scan'),
   cancelJobs: invoke('job:cancel'),
   previewClean: invoke('clean:preview'),
   cleanItem: invoke('clean:catalog'),

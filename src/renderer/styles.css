@@ -1064,3 +1064,100 @@ kbd {
   border: 1px solid var(--border-strong);
   color: var(--text-3);
 }
+
+/* ───── Projects ───── */
+.segmented {
+  display: inline-flex;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 2px;
+  gap: 2px;
+}
+.segmented button {
+  font: inherit;
+  font-weight: 540;
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  padding: 5px 14px;
+  border-radius: 7px;
+}
+.segmented button:hover {
+  color: var(--text);
+}
+.segmented button.active {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+.item-row.project-row {
+  grid-template-columns: minmax(0, 1fr) 110px 140px 84px 160px;
+}
+.project-row .item-acts {
+  min-width: 0;
+}
+.stack-text {
+  min-width: 0;
+  flex: 1;
+}
+.stack-text .nm .ellip {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.stack-text .nm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.stack-text .sub {
+  color: var(--text-3);
+  font-weight: 400;
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 1px;
+}
+.pill.tag {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 560;
+}
+.when {
+  font-size: 12px;
+  text-align: right;
+}
+.bar.split > div {
+  position: relative;
+  background: var(--c2);
+}
+.bar.split > div > i {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  background: var(--good);
+  border-radius: 3px;
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.chip {
+  background: var(--surface-2);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 12px;
+  color: var(--text);
+}
+.chip i {
+  font-style: normal;
+  color: var(--text-3);
+  margin-left: 6px;
+  font-size: 10.5px;
+}

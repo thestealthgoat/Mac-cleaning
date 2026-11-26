@@ -8,6 +8,7 @@ const REPO = 'https://github.com/thestealthgoat/Mac-cleaning';
 const VIEWS = [
   ['overview', 'Overview'],
   ['hidden', 'System Data'],
+  ['projects', 'Projects'],
   ['explorer', 'Explorer'],
   ['large', 'Large Files'],
   ['dupes', 'Duplicates'],

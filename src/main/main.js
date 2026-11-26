@@ -7,7 +7,9 @@ const fs = require('fs');
 const { Worker } = require('worker_threads');
 
 const disk = require('../core/disk');
-const { scanHidden, needsFda } = require('../core/hidden');
+const { scanHidden, needsFda, measureAll } = require('../core/hidden');
+const { scanPlugins } = require('../core/plugins');
+const { isWithin } = require('../core/paths');
 const { listDir, sizeOf } = require('../core/size');
 const { evaluate, grade } = require('../core/evaluate');
 const { trashPaths, planCatalogClean } = require('../core/cleanup');
@@ -22,6 +24,7 @@ const windowState = require('./window-state');
 const isDev = process.argv.includes('--dev');
 let win;
 let lastHidden = null;
+let lastProjects = null;
 const jobs = new Map();
 let jobSeq = 0;
 
@@ -212,6 +215,56 @@ function registerIpc() {
         ...protectedSkips(),
       ],
     });
+  });
+
+  ipcMain.handle('projects:scan', async () => {
+    const found = await startWorker('projects', {
+      roots: [HOME],
+      skip: [path.join(HOME, '.Trash'), path.join(HOME, 'Library'), ...protectedSkips()],
+    });
+    if (found.type !== 'done' || found.cancelled) return found;
+    send('job:progress', { mode: 'projects', phase: 'sizes', filesSeen: found.dirsSeen, bytesSeen: 0 });
+
+    // Link Xcode DerivedData folders back to the project that produced them.
+    const ddRoot = path.join(HOME, 'Library', 'Developer', 'Xcode', 'DerivedData');
+    let ddNames = [];
+    try {
+      ddNames = fs.readdirSync(ddRoot);
+    } catch {
+      /* no Xcode */
+    }
+    for (const n of ddNames) {
+      const res = await run('/usr/bin/plutil', ['-extract', 'WorkspacePath', 'raw', '-o', '-', path.join(ddRoot, n, 'info.plist')], { timeout: 5000 });
+      const ws = res.code === 0 ? res.stdout.trim() : null;
+      const project = ws && found.code.find((c) => isWithin(ws, c.path));
+      if (project) project.artifacts.push({ name: 'DerivedData', path: path.join(ddRoot, n), label: 'Xcode DerivedData', kind: 'build', external: true });
+    }
+
+    const paths = [
+      ...found.code.flatMap((c) => [c.path, ...c.artifacts.map((a) => a.path)]),
+      ...found.sessions.flatMap((s) => [s.path, ...s.backups.map((b) => b.path)]),
+    ];
+    const sizes = await measureAll(paths, { excludeNames: disk.hasFullDiskAccess() ? null : ['Containers', 'Group Containers'] });
+    const b = (p) => sizes.get(p)?.bytes ?? 0;
+    const code = found.code
+      .map((c) => {
+        const artifacts = c.artifacts.map((a) => ({ ...a, bytes: b(a.path) })).filter((a) => a.bytes > 0).sort((x, y) => y.bytes - x.bytes);
+        return { ...c, bytes: b(c.path), artifacts, artifactBytes: artifacts.reduce((s, a) => s + a.bytes, 0) };
+      })
+      .sort((x, y) => y.bytes - x.bytes);
+    const media = [...found.sessions, ...found.docs]
+      .map((s) => {
+        const backups = s.backups.map((x) => ({ ...x, bytes: b(x.path) })).filter((x) => x.bytes > 0);
+        return { ...s, bytes: s.bytes ?? b(s.path), backups, backupBytes: backups.reduce((t, x) => t + x.bytes, 0) };
+      })
+      .sort((x, y) => y.bytes - x.bytes);
+    lastProjects = { code, media, scannedAt: Date.now(), ms: found.ms, dirsSeen: found.dirsSeen };
+    return lastProjects;
+  });
+
+  ipcMain.handle('plugins:scan', async () => {
+    const vendors = await scanPlugins({ measure: (p) => measureAll(p), onProgress: (p) => send('job:progress', { mode: 'plugins', ...p, filesSeen: p.done ?? 0, bytesSeen: 0 }) });
+    return { vendors, scannedAt: Date.now() };
   });
 
   ipcMain.handle('job:cancel', async () => {

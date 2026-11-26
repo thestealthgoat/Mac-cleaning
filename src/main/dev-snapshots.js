@@ -23,10 +23,19 @@ module.exports = async function snapAll(win, app, dir) {
   // Wait for the System Data scan to finish (the Rescan button re-enables).
   await waitFor(win, `[...document.querySelectorAll('.view-head .btn')].some(b => b.textContent.includes('Rescan') && !b.disabled)`, 180000);
   await wait(800);
-  const routes = ['overview', 'hidden', 'explorer', 'large', 'dupes', 'about'];
+  const routes = ['overview', 'hidden', 'projects', 'explorer', 'large', 'dupes', 'about'];
   for (let i = 0; i < routes.length; i++) {
     await win.webContents.executeJavaScript(`document.querySelectorAll('.nav-item')[${i}].click()`);
     if (routes[i] === 'explorer') await waitFor(win, `!!document.querySelector('.tile')`, 120000);
+    if (routes[i] === 'projects') {
+      await waitFor(win, `!!document.querySelector('.project-row')`, 240000);
+      for (const [n, tab] of [[1, 'media'], [2, 'plugins']]) {
+        await wait(800);
+        fs.writeFileSync(path.join(dir, `${i + 1}-projects-${n === 1 ? 'code' : 'media'}.png`), (await win.webContents.capturePage()).toPNG());
+        await win.webContents.executeJavaScript(`document.querySelectorAll('.segmented button')[${n}].click()`);
+        await waitFor(win, `!!document.querySelector('.project-row')`, 240000);
+      }
+    }
     await wait(1200);
     const img = await win.webContents.capturePage();
     fs.writeFileSync(path.join(dir, `${i + 1}-${routes[i]}.png`), img.toPNG());

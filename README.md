@@ -25,6 +25,10 @@ macOS’s Storage settings dump everything they can’t classify into one big gr
   - Old macOS installers, installer `.dmg`/`.pkg` files in Downloads, the Trash
   - Virtual machines, Steam games, Logic/GarageBand sound libraries, Adobe media cache
   - **Leftovers from deleted apps** in Application Support (flagged “No matching app”)
+- **Projects** — Silt works out what your files belong to:
+  - **Code**: every Git/Node/Python/Rust/Swift/Xcode/… project with its size, last activity and how much is rebuildable (`node_modules`, `.venv`, `target`, `.next`, Pods, git-ignored build output, and Xcode DerivedData traced back to its project). One click moves the rebuildable parts of a stale project to the Trash.
+  - **Music & live**: Logic, GarageBand, Ableton Live, Studio One, Pro Tools, Cubase, Nuendo, REAPER, FL Studio, Bitwig and Reason sessions grouped into project folders with their versions, backups and caches; MainStage concerts and Gig Performer rigs; ProPresenter libraries. Online-only cloud sessions are labelled.
+  - **Plug-ins & libraries**: every AU, VST, VST3, AAX and CLAP plug-in grouped by vendor, with each vendor’s sound libraries and support folders attached — plus libraries from vendors whose plug-ins are no longer installed.
 - **The parts macOS hides** — APFS volumes (Preboot, VM/swap, Recovery, Update), purgeable space, and local Time Machine / update snapshots.
 - **Explorer** — drill down through any folder with a live treemap; sizes stream in as they’re measured.
 - **Large Files** — the biggest files anywhere in your home folder, filterable by size and how long since they were touched.
@@ -84,7 +88,9 @@ src/
     evaluate.js    health score + findings
     cleanup.js     plans and performs Trash moves through the safety check
     paths.js       glob expansion and the deny list
-    walk-worker.js worker thread for Large Files and Duplicates
+    projects.js    project detection: code markers, rebuildable folders, DAW sessions, rigs
+    plugins.js     plug-in identification and vendor ↔ library matching
+    walk-worker.js worker thread for Large Files, Duplicates and Projects
     apps.js        installed-app index for leftover detection
     report.js      Markdown report
   renderer/        vanilla JS UI (ES modules, no framework, no bundler)
@@ -92,9 +98,17 @@ src/
 
 Sizes are measured with the system `du` (allocated blocks, hard links counted once, one filesystem only), so they match what is really charged to the disk. APFS clones and snapshots mean some numbers can still differ from the Finder’s — Silt says so where it matters.
 
+## Keyboard shortcuts
+
+| | |
+| --- | --- |
+| <kbd>⌘1</kbd>–<kbd>⌘6</kbd> | Overview, System Data, Projects, Explorer, Large Files, Duplicates |
+| <kbd>⌘R</kbd> | Rescan |
+| <kbd>⌘E</kbd> | Export report |
+
 ## Contributing
 
-The most valuable contributions are new entries for [`src/core/catalog.js`](src/core/catalog.js): a place where macOS or a popular app hoards data, what it is, and whether it’s safe to remove. See [CONTRIBUTING.md](CONTRIBUTING.md).
+The most valuable contributions are new entries for [`src/core/catalog.js`](src/core/catalog.js) (a place where macOS or a popular app hoards data), new DAW/project types in [`src/core/projects.js`](src/core/projects.js), and audio vendors in [`src/core/plugins.js`](src/core/plugins.js). See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

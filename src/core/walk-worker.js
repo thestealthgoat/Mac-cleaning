@@ -174,9 +174,21 @@ function duplicates() {
   return { groups };
 }
 
+function projects() {
+  const { findProjects, groupSessions, groupDocs } = require('./projects');
+  const found = findProjects(roots, {
+    skip,
+    onProgress: (dir, dirs) => {
+      filesSeen = dirs;
+      progress(dir, { phase: 'finding' });
+    },
+  });
+  return { code: found.code, sessions: groupSessions(found.sessions), docs: groupDocs(found.docs), dirsSeen: found.dirsSeen };
+}
+
 try {
   const started = Date.now();
-  const result = mode === 'dupes' ? duplicates() : largeFiles();
+  const result = mode === 'dupes' ? duplicates() : mode === 'projects' ? projects() : largeFiles();
   parentPort.postMessage({ type: 'done', cancelled, filesSeen, bytesSeen, ms: Date.now() - started, ...result });
 } catch (err) {
   parentPort.postMessage({ type: 'error', message: err.message });
