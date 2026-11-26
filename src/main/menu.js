@@ -28,12 +28,13 @@ function setupAboutPanel() {
 }
 
 /** Native macOS menu bar. `send(channel, payload)` forwards actions to the renderer. */
-function buildMenu({ send, isDev }) {
+function buildMenu({ send, isDev, onCheckUpdates }) {
   const template = [
     {
       label: 'Silt',
       submenu: [
         { role: 'about', label: 'About Silt' },
+        { label: 'Check for Updates…', click: () => onCheckUpdates?.() },
         { type: 'separator' },
         { label: 'Releases…', click: () => shell.openExternal(`${REPO}/releases`) },
         { type: 'separator' },

@@ -1334,3 +1334,34 @@ input.search:focus {
     max-height: 280px;
   }
 }
+
+/* ───── Update banner ───── */
+#update-banner {
+  position: relative;
+  z-index: 2;
+}
+.update-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 40px 32px -28px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  animation: viewIn 0.25s ease-out both;
+}
+.update-banner img {
+  width: 26px;
+  height: 26px;
+}
+.update-banner .grow {
+  flex: 1;
+}
+.switch-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0;
+  color: var(--text);
+}

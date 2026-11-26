@@ -23,6 +23,7 @@ export const state = {
   plugins: null,
   jobProgress: null,
   route: 'overview',
+  update: null,
 };
 
 const ROUTES = [
@@ -127,6 +128,31 @@ api.onJobProgress((p) => {
   }
   const cur = document.querySelector('[data-job-current]');
   if (cur && p.current) cur.textContent = p.current.replace(state.overview?.home ?? '', '~');
+});
+
+function renderUpdateBanner() {
+  const el = document.getElementById('update-banner');
+  const u = state.update;
+  if (!u || u.status !== 'ready') return el.replaceChildren();
+  el.replaceChildren(
+    h(
+      'div',
+      { class: 'update-banner' },
+      h('img', { src: 'assets/icon.png', alt: '' }),
+      h('div', { class: 'grow' }, h('b', {}, `Silt ${u.version} is ready.`), ' Restart to finish updating — it takes a few seconds.'),
+      h('button', { class: 'btn small primary', onclick: () => api.installUpdate() }, 'Restart to Update'),
+    ),
+  );
+}
+
+api.onUpdate((u) => {
+  state.update = u;
+  renderUpdateBanner();
+  if (state.route === 'about') render();
+});
+api.updateStatus().then((u) => {
+  state.update = u;
+  renderUpdateBanner();
 });
 
 api.onMenu(async (m) => {

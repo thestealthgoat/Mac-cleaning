@@ -34,6 +34,7 @@ macOS’s Storage settings dump everything they can’t classify into one big gr
 - **Explorer** — drill down through any folder with a live treemap; sizes stream in as they’re measured.
 - **Large Files** — the biggest files anywhere in your home folder, filterable by size and how long since they were touched.
 - **Duplicates** — byte-for-byte identical files (size → quick fingerprint → full SHA-256), with “keep oldest/newest” auto-select.
+- **Automatic updates** — new releases download in the background from GitHub and install when you restart Silt (signed builds only; can be turned off in About).
 - **Export report** — a shareable Markdown storage report (paths shown as `~`, so your username isn’t leaked).
 
 ## Safety model
@@ -47,11 +48,15 @@ Silt is designed so you can’t hurt your Mac with it:
 | Tool-managed data uses the tool | Docker, simulators, Homebrew, npm, pnpm, Conda, Go… are reclaimed with their own command, opened visibly in Terminal. Silt only runs commands from its own catalog. |
 | Clear labels | Every item is tagged **Safe** (regenerates automatically), **Review** (your data — look first) or **Info** (explained, not removable from Silt). |
 | No surprise permission prompts | Without Full Disk Access, Silt skips the folders macOS protects (app containers, Mail, Messages) instead of triggering blocking prompts. |
-| Private | No network access, no analytics, no accounts. The renderer runs sandboxed with a strict CSP. |
+| Private | No analytics, no accounts; nothing about your files leaves your Mac. The only network request is the update check against this repo's GitHub Releases (switch it off in About). The renderer runs sandboxed with a strict CSP. |
 
 ## Install
 
-Download the latest `.dmg` from [**Releases**](https://github.com/thestealthgoat/Mac-cleaning/releases). Pick `arm64` for Apple Silicon or `x64` for Intel Macs.
+**[⬇ Download for Apple Silicon (M1, M2, M3, M4…)](https://github.com/thestealthgoat/Mac-cleaning/releases/latest/download/Silt-Apple-Silicon.dmg)** · **[⬇ Download for Intel Macs](https://github.com/thestealthgoat/Mac-cleaning/releases/latest/download/Silt-Intel.dmg)**
+
+Not sure which Mac you have?  › About This Mac — “Chip: Apple M…” means Apple Silicon, “Processor: Intel” means Intel. All versions are on the [Releases](https://github.com/thestealthgoat/Mac-cleaning/releases) page.
+
+Open the DMG and drag **Silt** into **Applications**. Silt keeps itself up to date after that.
 
 Signed, notarized releases open normally. If a release is marked *unsigned*, macOS blocks the first launch: Open Silt once, then go to *System Settings › Privacy & Security*, scroll down and click **Open Anyway**. (On macOS 14 and earlier, right-click **Silt.app → Open** also works.) Or remove the quarantine flag in Terminal:
 

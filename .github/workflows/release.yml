@@ -82,6 +82,13 @@ jobs:
             fi
           done
 
+      # Version-less copies give permanent "latest" download links:
+      # https://github.com/<owner>/<repo>/releases/latest/download/Silt-Apple-Silicon.dmg
+      - name: Add stable download names
+        run: |
+          cp dist/Silt-*-arm64.dmg dist/Silt-Apple-Silicon.dmg
+          cp dist/Silt-*-x64.dmg dist/Silt-Intel.dmg
+
       - name: Remove signing files
         if: always()
         run: rm -f "$RUNNER_TEMP/developer-id.p12" "$RUNNER_TEMP/AuthKey.p8"
@@ -89,6 +96,11 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           draft: true
+          # latest-mac.yml + blockmaps let installed copies update themselves.
           files: |
             dist/*.dmg
             dist/*.zip
+            dist/*.blockmap
+            dist/latest-mac.yml
+            dist/Silt-Apple-Silicon.dmg
+            dist/Silt-Intel.dmg

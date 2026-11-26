@@ -1,7 +1,7 @@
 {
   "name": "silt",
   "productName": "Silt",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Silt — storage, explained. A free, open-source Mac app that shows where your disk space went (including the hidden System Data) and cleans it up safely.",
   "main": "src/main/main.js",
   "license": "MIT",
@@ -108,10 +108,21 @@
       "artifactName": "Silt-${version}-${arch}.dmg"
     },
     "copyright": "Copyright © 2026 Silt contributors",
-    "artifactName": "Silt-${version}-${arch}-mac.${ext}"
+    "artifactName": "Silt-${version}-${arch}-mac.${ext}",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "thestealthgoat",
+        "repo": "Mac-cleaning",
+        "releaseType": "release"
+      }
+    ]
   },
   "devDependencies": {
     "electron": "^45.5.0",
     "electron-builder": "^26.18.0"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.11"
   }
 }

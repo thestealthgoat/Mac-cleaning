@@ -21,6 +21,8 @@ const { buildMarkdownReport } = require('../core/report');
 const { run, pool } = require('../core/exec');
 const { buildMenu, setupAboutPanel } = require('./menu');
 const windowState = require('./window-state');
+const Settings = require('./settings');
+const { createUpdater } = require('./updater');
 
 const isDev = process.argv.includes('--dev');
 let win;
@@ -39,7 +41,9 @@ const ALLOWED_COMMANDS = new Set([
   'tmutil thinlocalsnapshots / 999999999999 4',
 ]);
 
-app.setName('Silt');
+// Dev builds get their own name so they can run next to an installed Silt
+// (separate single-instance lock and settings folder).
+app.setName(app.isPackaged ? 'Silt' : 'Silt Dev');
 
 function createWindow() {
   const bounds = windowState.load({ width: 1240, height: 800 });
@@ -90,12 +94,18 @@ app.on('second-instance', () => {
   }
 });
 
+let settings;
+let updater;
+
 app.whenReady().then(() => {
+  settings = Settings.create(app.getPath('userData'));
+  updater = createUpdater({ settings, send, getWindow: () => win });
   setupAboutPanel();
-  buildMenu({ send, isDev });
+  buildMenu({ send, isDev, onCheckUpdates: () => updater.check({ interactive: true }) });
   if (!app.isPackaged && app.dock) app.dock.setIcon(path.join(__dirname, '..', '..', 'build', 'icon.png'));
   registerIpc();
   createWindow();
+  updater.schedule();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
@@ -456,6 +466,16 @@ function registerIpc() {
     fs.writeFileSync(filePath, md);
     shell.showItemInFolder(filePath);
     return { ok: true, filePath };
+  });
+
+  ipcMain.handle('update:status', async () => updater.status());
+  ipcMain.handle('update:check', async () => updater.check({ interactive: false }));
+  ipcMain.handle('update:install', async () => updater.promptRestart());
+  ipcMain.handle('settings:get', async () => settings.all());
+  ipcMain.handle('settings:set', async (_e, key, value) => {
+    const all = settings.set(key, value);
+    if (key === 'autoUpdate') updater.schedule();
+    return all;
   });
 
   ipcMain.handle('app:info', async () => ({

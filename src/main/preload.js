@@ -39,4 +39,10 @@ contextBridge.exposeInMainWorld('silt', {
   onHiddenProgress: (fn) => on('hidden:progress', fn),
   onJobProgress: (fn) => on('job:progress', fn),
   onMenu: (fn) => on('menu', fn),
+  onUpdate: (fn) => on('update:status', fn),
+  updateStatus: invoke('update:status'),
+  checkForUpdates: invoke('update:check'),
+  installUpdate: invoke('update:install'),
+  getSettings: invoke('settings:get'),
+  setSetting: invoke('settings:set'),
 });

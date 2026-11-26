@@ -29,7 +29,7 @@ export function renderAbout(ctx) {
         { class: 'grow' },
         h('h3', { style: { fontSize: '22px' } }, 'Silt'),
         h('p', {}, 'Storage, explained. A free, open-source storage analyzer and cleaner for macOS.'),
-        h('div', { class: 'steps' }, h('span', {}, info ? `Version ${info.version}` : 'Version …'), h('span', {}, 'MIT License'), h('span', {}, 'No tracking, no network')),
+        h('div', { class: 'steps' }, h('span', {}, info ? `Version ${info.version}` : 'Version …'), h('span', {}, 'MIT License'), h('span', {}, 'No tracking')),
       ),
       button('View on GitHub', { onClick: () => api.openUrl('https://github.com/thestealthgoat/Mac-cleaning') }),
     ),
@@ -47,7 +47,7 @@ export function renderAbout(ctx) {
           h('li', {}, 'Only “Empty Trash” is permanent, and it always asks first.'),
           h('li', {}, 'System folders, iCloud Drive, Mail, Messages, Keychains and Preferences are on a hard-coded deny list.'),
           h('li', {}, 'Tool-managed data (Docker, simulators, Homebrew, npm…) is reclaimed with the tool’s own command, shown to you in Terminal.'),
-          h('li', {}, 'No network access, no telemetry, no accounts. Silt never sends data anywhere.'),
+          h('li', {}, 'No telemetry, no accounts, and nothing about your files ever leaves your Mac. The only network request is checking GitHub for a newer version, which you can turn off.'),
         ),
         h('h3', {}, 'Why “System Data” is so big'),
         h(
@@ -61,6 +61,7 @@ export function renderAbout(ctx) {
         { class: 'card prose' },
         h('h3', { style: { marginTop: 0 } }, 'This Mac'),
         meta,
+        updatesSection(ctx),
         h('h3', {}, 'Permissions'),
         h('p', {}, 'Full Disk Access lets Silt measure protected folders such as Mail, Messages, app containers and device backups. It is optional.'),
         button('Open Full Disk Access settings', { onClick: () => api.openFdaSettings() }),
@@ -70,4 +71,37 @@ export function renderAbout(ctx) {
     ),
   );
   return root;
+}
+
+function updatesSection(ctx) {
+  const { api, state } = ctx;
+  const u = state.update || {};
+  const box = h('div', {});
+  const statusText = {
+    dev: 'Updates are off in development builds.',
+    idle: 'Not checked yet.',
+    checking: 'Checking…',
+    current: `You have the latest version${u.checkedAt ? ` (checked ${new Date(u.checkedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })})` : ''}.`,
+    downloading: `Downloading Silt ${u.version || ''}… ${u.progress != null ? `${u.progress}%` : ''}`,
+    ready: `Silt ${u.version} is ready to install.`,
+    error: `Couldn’t check: ${u.error || 'unknown error'}`,
+  }[u.status] || '';
+  const toggle = h('input', {
+    type: 'checkbox',
+    checked: u.autoUpdate !== false,
+    disabled: u.status === 'dev',
+    onchange: async (e) => {
+      await api.setSetting('autoUpdate', e.target.checked);
+      state.update = { ...u, autoUpdate: e.target.checked };
+    },
+  });
+  box.append(
+    h('h3', {}, 'Updates'),
+    h('label', { class: 'switch-row' }, toggle, 'Check for updates automatically'),
+    h('p', { style: { margin: '4px 0 10px' } }, statusText),
+    u.status === 'ready'
+      ? button('Restart to Update', { kind: 'primary', onClick: () => api.installUpdate() })
+      : button('Check Now', { disabled: u.status === 'dev' || u.status === 'checking' || u.status === 'downloading', onClick: () => api.checkForUpdates() }),
+  );
+  return box;
 }
