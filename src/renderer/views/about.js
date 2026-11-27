@@ -1,4 +1,5 @@
 import { h, button } from '../ui.js';
+import { showFdaPrompt } from './fda-prompt.js';
 
 let info = null;
 
@@ -62,9 +63,6 @@ export function renderAbout(ctx) {
         h('h3', { style: { marginTop: 0 } }, 'This Mac'),
         meta,
         updatesSection(ctx),
-        h('h3', {}, 'Permissions'),
-        h('p', {}, 'Full Disk Access lets Silt measure protected folders such as Mail, Messages, app containers and device backups. It is optional.'),
-        button('Open Full Disk Access settings', { onClick: () => api.openFdaSettings() }),
         h('h3', {}, 'License'),
         h('p', {}, 'MIT. Contributions to the hidden-data catalog (', h('code', {}, 'src/core/catalog.js'), ') are especially welcome.'),
       ),
@@ -102,6 +100,21 @@ function updatesSection(ctx) {
     u.status === 'ready'
       ? button('Restart to Update', { kind: 'primary', onClick: () => api.installUpdate() })
       : button('Check Now', { disabled: u.status === 'dev' || u.status === 'checking' || u.status === 'downloading', onClick: () => api.checkForUpdates() }),
+  );
+  const granted = !!state.overview?.fullDiskAccess;
+  const ask = h('input', {
+    type: 'checkbox',
+    checked: state.settings?.fdaPrompt !== false,
+    disabled: granted,
+    onchange: async (e) => {
+      state.settings = await api.setSetting('fdaPrompt', e.target.checked);
+    },
+  });
+  box.append(
+    h('h3', { style: { marginTop: 22 } }, 'Full Disk Access'),
+    h('p', { style: { margin: '4px 0 10px' } }, granted ? 'On. Silt can measure everything, including app containers and backups.' : 'Off. App containers, Mail, Messages and iPhone backups can’t be measured.'),
+    granted ? null : h('label', { class: 'switch-row' }, ask, 'Ask when Silt opens'),
+    granted ? null : button('Turn On…', { kind: 'primary', onClick: () => showFdaPrompt(api) }),
   );
   return box;
 }

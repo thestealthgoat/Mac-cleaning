@@ -15,7 +15,7 @@ const GB = 1e9;
  * @param {object} [input.hidden]   result of scanHidden()
  * @param {boolean} [input.fullDiskAccess]
  */
-function evaluate({ capacity, apfs, snapshots, hidden, fullDiskAccess = true }) {
+function evaluate({ capacity, apfs, snapshots, hidden, fullDiskAccess = true, appsFolder = null }) {
   const findings = [];
   const total = capacity.total || 1;
   const freeRatio = capacity.free / total;
@@ -136,6 +136,48 @@ function evaluate({ capacity, apfs, snapshots, hidden, fullDiskAccess = true }) 
         bytes: item.uniqueBytes,
         itemId: item.id,
         action: { type: 'reveal', path: item.paths[0]?.path },
+      });
+    }
+  }
+
+  // ── Applications folder (counted as "Applications" by macOS even when it isn't apps) ──
+  if (appsFolder?.applications) {
+    const home = require('os').homedir();
+    const tilde = (p) => (p && p.startsWith(home) ? '~' + p.slice(home.length) : p);
+    const name = (p) => require('path').basename(p);
+    for (const c of appsFolder.installerCopies ?? []) {
+      findings.push({
+        id: `installer-copy:${c.path}`,
+        severity: c.matchedBytes > 10 * GB ? 'warning' : 'info',
+        title: `“${name(c.path)}” is a second copy of a library you already installed (${formatBytes(c.matchedBytes)})`,
+        detail: `${c.files} of its large files are already installed in ${tilde(c.installedAt)}. Installers only need this copy to reinstall. Move it to an external drive, or to the Trash if you can download it again from the vendor.`,
+        bytes: c.matchedBytes,
+        action: { type: 'trash-path', path: c.path },
+      });
+    }
+    for (const i of appsFolder.applications.items.filter((x) => x.versions)) {
+      const old = i.versions.older.reduce((s, o) => s + o.bytes, 0);
+      if (old < 1 * GB) continue;
+      const vs = i.versions.older.map((o) => `V${o.version}`).join(', ');
+      findings.push({
+        id: `old-version:${i.path}`,
+        severity: 'info',
+        title: `${i.name}: ${vs} is still installed next to V${i.versions.latest} (${formatBytes(old)})`,
+        detail: `The older version’s folders sit beside the current ones in ${i.path}. If your sessions use V${i.versions.latest}, remove ${vs} with the vendor’s own installer app${/waves/i.test(i.name) ? ' (Waves Central)' : ''} so licences and shells stay consistent.`,
+        bytes: old,
+        action: { type: 'reveal', path: i.path },
+      });
+    }
+    const notApps = appsFolder.applications.notApps ?? 0;
+    if (notApps > 10 * GB) {
+      const top = appsFolder.applications.items.filter((x) => x.kind === 'content').slice(0, 3);
+      findings.push({
+        id: 'apps-folder-not-apps',
+        severity: 'info',
+        title: `${formatBytes(notApps)} of your Applications folder isn’t apps`,
+        detail: `macOS counts everything in Applications as “Applications”, including folders like ${top.map((t) => `${t.name} (${formatBytes(t.bytes)})`).join(', ')}. Silt lists them under Uninstall › Not apps.`,
+        bytes: notApps,
+        action: { type: 'go', route: 'uninstall', opts: { uninstallTab: 'notapps' } },
       });
     }
   }

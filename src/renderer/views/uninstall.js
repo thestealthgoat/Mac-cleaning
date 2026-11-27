@@ -3,13 +3,21 @@ import { h, bytes, icon, button, busy, viewHead, tilde, toast, age } from '../ui
 const UNUSED_DAYS = 180;
 const isUnused = (a) => a.lastUsed != null && Date.now() - a.lastUsed > UNUSED_DAYS * 86400000;
 
-const ui = { sort: 'size', byApp: null, pendingTarget: null, query: '', apps: null, loading: false, selected: null, plan: null, planning: false, checked: new Set(), openGroups: new Set() };
+const ui = { sort: 'size', breakdown: null, folder: null, byApp: null, pendingTarget: null, query: '', apps: null, loading: false, selected: null, plan: null, planning: false, checked: new Set(), openGroups: new Set() };
 
 const GROUP_ORDER = ['app', 'support', 'caches', 'prefs', 'state', 'containers', 'logs', 'launch', 'shared', 'vendor', 'plugins', 'documents'];
 
 export function renderUninstall(ctx) {
   const { api } = ctx;
   // Opened from System Data › By app with an app chosen.
+  if (ctx.state.uninstallTab) {
+    ui.sort = ctx.state.uninstallTab;
+    ctx.state.uninstallTab = null;
+    ui.query = '';
+    ui.selected = null;
+  }
+  if (ctx.state.breakdown) ui.breakdown = ctx.state.breakdown; // includes installer copies once found
+  if (ui.sort === 'notapps' && !ui.breakdown) loadBreakdown(ctx);
   if (ctx.state.uninstallTarget) {
     ui.pendingTarget = ctx.state.uninstallTarget;
     ctx.state.uninstallTarget = null;
@@ -77,6 +85,26 @@ function openPending(ctx) {
   if (target) requestAnimationFrame(() => select(target, ctx));
 }
 
+/** The Applications folder's non-app items (shared with Overview's disk breakdown). */
+async function loadBreakdown(ctx) {
+  if (ui.loadingBreakdown) return;
+  ui.loadingBreakdown = true;
+  try {
+    ui.breakdown = ctx.state.breakdown || (await ctx.api.diskBreakdown());
+    if (!ctx.state.breakdown) ctx.state.breakdown = ui.breakdown;
+  } catch {
+    ui.breakdown = null;
+  } finally {
+    ui.loadingBreakdown = false;
+  }
+  if (ctx.state.route === 'uninstall') {
+    paintList(ctx);
+    paintDetail(ctx);
+  }
+}
+
+const notApps = () => (ui.breakdown?.applications.items ?? []).filter((i) => i.kind === 'content' || i.kind === 'file');
+
 /** How much System Data each app keeps (shared with the System Data › By app view). */
 async function loadFootprints(ctx) {
   try {
@@ -105,13 +133,33 @@ function paintSort(ctx) {
   const el = document.getElementById('app-sort');
   if (!el) return;
   const unused = (ui.apps || []).filter(isUnused);
-  const tab = (id, label) => h('button', { class: `seg ${ui.sort === id ? 'active' : ''}`, onclick: () => ((ui.sort = id), paintList(ctx)) }, label);
+  const tab = (id, label) =>
+    h(
+      'button',
+      {
+        class: `seg ${ui.sort === id ? 'active' : ''}`,
+        'aria-pressed': String(ui.sort === id),
+        onclick: () => {
+          ui.sort = id;
+          ui.folder = null;
+          if (id === 'notapps' && !ui.breakdown) loadBreakdown(ctx);
+          paintList(ctx);
+          paintDetail(ctx);
+        },
+      },
+      label,
+    );
   el.replaceChildren(
     ...[
     tab('size', 'All apps'),
     tab('unused', `Unused for 6 months${ui.apps ? ` (${unused.length})` : ''}`),
+    tab('notapps', `Not apps${ui.breakdown ? ` (${notApps().length})` : ''}`),
     ui.sort === 'unused' && unused.length ? h('span', { class: 'faint' }, `${bytes(unused.reduce((s, a) => s + footprint(a), 0))} in apps you haven’t used since ${new Date(Date.now() - UNUSED_DAYS * 86400000).toLocaleDateString(undefined, { month: 'short', year: 'numeric' })}, including their System Data`) : null,
-      ui.sort === 'unused' ? null : h('span', { class: 'faint' }, ui.byApp ? 'Sizes include each app’s System Data.' : 'Measuring each app’s System Data…'),
+      ui.sort === 'notapps'
+        ? h('span', { class: 'faint' }, ui.breakdown ? `${bytes(ui.breakdown.applications.notApps)} of your Applications folder is folders and files that aren’t apps. macOS still counts it as “Applications”.` : 'Measuring the Applications folder…')
+        : ui.sort === 'unused'
+          ? null
+          : h('span', { class: 'faint' }, ui.byApp ? 'Sizes include each app’s System Data.' : 'Measuring each app’s System Data…'),
     ].filter(Boolean),
   );
 }
@@ -131,6 +179,7 @@ function paintList(ctx) {
     el.replaceChildren(...Array.from({ length: 8 }, () => h('div', { class: 'skeleton', style: { height: '40px', margin: '6px 0' } })));
     return;
   }
+  if (ui.sort === 'notapps') return paintNotApps(el, ctx);
   const apps = filtered();
   if (!apps.length) {
     el.replaceChildren(h('div', { class: 'empty', style: { padding: '24px 8px' } }, h('p', {}, ui.query ? `No app matches “${ui.query}”.` : 'Every app here has been used in the last 6 months.')));
@@ -158,7 +207,97 @@ function paintList(ctx) {
   );
 }
 
+function paintNotApps(el, ctx) {
+  if (!ui.breakdown) {
+    el.replaceChildren(...Array.from({ length: 4 }, () => h('div', { class: 'skeleton', style: { height: '40px', margin: '6px 0' } })));
+    return;
+  }
+  const items = notApps();
+  if (!items.length) {
+    el.replaceChildren(h('div', { class: 'empty', style: { padding: '24px 8px' } }, h('p', {}, 'Everything in your Applications folder is an app.'), button('Show all apps', { kind: 'small', onClick: () => ((ui.sort = 'size'), paintList(ctx)) })));
+    return;
+  }
+  el.replaceChildren(
+    ...items.map((f) =>
+      h(
+        'button',
+        { class: `app-item ${ui.folder?.path === f.path ? 'active' : ''}`, onclick: () => selectFolder(f, ctx), title: f.path },
+        icon(f.kind === 'file' ? 'file' : 'folder', 'app-fallback'),
+        h('span', { class: 'app-text' }, h('span', { class: 'app-name' }, f.name), h('span', { class: 'app-meta' }, folderKind(f))),
+        h('span', { class: 'size' }, bytes(f.bytes)),
+      ),
+    ),
+  );
+}
+
+function copyOf(f) {
+  return (ui.breakdown?.installerCopies ?? []).find((c) => c.path === f.path || c.path.startsWith(f.path + '/'));
+}
+
+function folderKind(f) {
+  if (f.kind === 'file') return 'File';
+  if (copyOf(f)) return 'Installer copy of a library you already installed';
+  if (f.versions) return `Folder with old versions (V${f.versions.older.map((o) => o.version).join(', V')})`;
+  if (f.apps.length) return `Folder with ${f.apps.length} small app${f.apps.length === 1 ? '' : 's'} inside`;
+  return 'Folder, no apps inside';
+}
+
+function selectFolder(f, ctx) {
+  ui.folder = f;
+  ui.selected = null;
+  paintList(ctx);
+  paintDetail(ctx);
+}
+
+function folderDetail(f, ctx) {
+  const copy = copyOf(f);
+  const trash = button(`Move “${f.name}” to Trash…`, { kind: 'small danger', iconName: 'trash' });
+  trash.onclick = busy(trash, async () => {
+    const res = await ctx.api.trashPaths([f.path]);
+    if (!res || res.cancelled) return;
+    if (res.moved) {
+      toast(`Moved “${f.name}” to the Trash (${bytes(res.bytes)}). Empty the Trash to free the space.`, 6000);
+      ui.folder = null;
+      ui.breakdown = null;
+      ctx.state.breakdown = null;
+      loadBreakdown(ctx);
+      ctx.refreshBreakdown?.();
+    } else toast(res.results?.[0]?.reason || 'Couldn’t move it to the Trash.');
+  });
+  const old = f.versions ? f.versions.older.reduce((s, o) => s + o.bytes, 0) : 0;
+  return h(
+    'div',
+    { class: 'card' },
+    h('div', { class: 'app-head' }, icon('folder', 'app-fallback'), h('div', { class: 'grow' }, h('h3', {}, f.name), h('div', { class: 'faint' }, `${bytes(f.bytes)} · ${tilde(f.path)}`))),
+    h('div', { class: 'sysdata-note' }, h('b', {}, 'Not an app. '), 'It sits in your Applications folder, so macOS counts it as “Applications”, but it’s a folder of files. Uninstalling apps won’t touch it.'),
+    copy
+      ? h(
+          'div',
+          { class: 'banner', style: { margin: '12px 0 0' } },
+          h('div', { class: 'grow' }, h('b', {}, `Second copy: ${bytes(copy.matchedBytes)}. `), `${copy.files} of its large files are already installed in ${tilde(copy.installedAt)}. The installer only needs this copy to reinstall. Move it to an external drive, or to the Trash if you can download it again from the vendor.`),
+        )
+      : null,
+    f.versions
+      ? h(
+          'div',
+          { class: 'banner', style: { margin: '12px 0 0' } },
+          h('div', { class: 'grow' }, h('b', {}, `Older version still installed: ${bytes(old)}. `), `Folders for V${f.versions.older.map((o) => o.version).join(', V')} sit next to V${f.versions.latest}. If your sessions use V${f.versions.latest}, remove the old version with the vendor’s installer app${/waves/i.test(f.name) ? ' (Waves Central)' : ''} rather than deleting folders by hand.`),
+        )
+      : null,
+    f.apps.length ? h('p', { class: 'faint' }, `Apps inside: ${f.apps.map((a) => a.split('/').pop().replace(/\.app$/, '')).join(', ')}`) : null,
+    h(
+      'div',
+      { class: 'toolbar', style: { marginTop: 14, marginBottom: 0 } },
+      button('Show in Finder', { kind: 'small', onClick: () => ctx.api.reveal(f.path) }),
+      button('Explore', { kind: 'small', onClick: () => ctx.go('explorer', { explorerPath: f.path }) }),
+      h('span', { class: 'spacer' }),
+      copy || f.kind === 'file' ? trash : null,
+    ),
+  );
+}
+
 async function select(app, ctx) {
+  ui.folder = null;
   ui.selected = app;
   ui.plan = null;
   ui.planning = true;
@@ -180,6 +319,14 @@ async function select(app, ctx) {
 function paintDetail(ctx) {
   const el = document.getElementById('app-detail');
   if (!el) return;
+  if (ui.sort === 'notapps' && ui.folder) {
+    el.replaceChildren(folderDetail(ui.folder, ctx));
+    return;
+  }
+  if (ui.sort === 'notapps' && !ui.selected) {
+    el.replaceChildren(h('div', { class: 'card empty' }, icon('folder', 'empty-icon'), h('h3', {}, 'Choose a folder'), h('p', {}, 'These sit in your Applications folder but aren’t apps, so the app list never shows them. Silt says what each one is and whether it duplicates something you already installed.')));
+    return;
+  }
   const a = ui.selected;
   if (!a) {
     el.replaceChildren(h('div', { class: 'card empty' }, icon('uninstall', 'empty-icon'), h('h3', {}, 'Choose an app'), h('p', {}, 'Silt finds its support files, caches, preferences, background helpers and shared content, and tells you what is safe to remove.')));

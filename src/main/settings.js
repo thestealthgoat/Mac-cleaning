@@ -4,7 +4,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const DEFAULTS = { autoUpdate: true };
+const DEFAULTS = { autoUpdate: true, fdaPrompt: true };
 
 function create(dir) {
   const file = path.join(dir, 'settings.json');

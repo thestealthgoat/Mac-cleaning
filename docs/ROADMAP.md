@@ -37,6 +37,7 @@ Common complaints about the category (Apple Community, Malwarebytes forums, Macw
 | Unused apps | CleanMyMac | Uninstall shows when each app was last used and filters to apps unused for 6 months (falls back to the app's own settings dates when Spotlight has no record) |
 | Plug-in formats no host loads | Nobody | Finds AAX / VST / VST3 / CLAP copies that none of your installed hosts can load, and moves them to the Trash on request. Audio Units are never suggested |
 | "System Data is a few hundred GB, but whose is it?" | Nobody (DaisyDisk shows folders, not owners) | **System Data by app**: every Library folder matched to an installed app, shared content, plug-ins, macOS, developer tools, or no installed app (leftovers you can review and move to the Trash). Uninstall shows each app's System Data alongside the app |
+| "Applications is 250 GB but my biggest app is 5 GB" | Nobody | Overview measures Applications, System Data, your files and cloud drives separately, without double counting; Uninstall › Not apps lists the non-app folders macOS counts as Applications and detects installer copies of already-installed libraries and side-by-side old versions |
 | Apple's sound library installed twice | Nobody | Overview warns when both the old `/Library/Application Support/Logic` and the new `Logic Pro Library.bundle` are large, and points to Sound Library Manager |
 
 ## Next

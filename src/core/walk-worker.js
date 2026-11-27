@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const { mode, roots, minBytes = 0, limit = 500, skip = [] } = workerData;
+const { mode, roots, minBytes = 0, limit = 500, skip = [], skipNames = [] } = workerData;
 
 // Cancellation is done by terminating the worker from the main thread (the
 // walk is synchronous, so a message listener would never get a chance to run —
@@ -19,6 +19,8 @@ const { mode, roots, minBytes = 0, limit = 500, skip = [] } = workerData;
 const cancelled = false;
 
 const skipSet = new Set(skip);
+// Folder names never worth descending into for big-file searches (e.g. node_modules).
+const skipNameSet = new Set(skipNames);
 // Never descend into these: other volumes, the sealed system, virtual filesystems,
 // and cloud-backed folders where reading file contents could trigger downloads.
 const ALWAYS_SKIP = ['/System', '/Volumes', '/dev', '/private/var/vm', '/private/var/db', '/cores', '/Network'];
@@ -56,7 +58,7 @@ function walk(root, onFile) {
       const full = path.join(dir, e.name);
       if (e.isSymbolicLink()) continue;
       if (e.isDirectory()) {
-        stack.push(full);
+        if (!skipNameSet.has(e.name)) stack.push(full);
         continue;
       }
       if (!e.isFile()) continue;

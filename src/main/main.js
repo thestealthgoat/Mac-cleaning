@@ -27,6 +27,8 @@ const { createUpdater } = require('./updater');
 const History = require('../core/history');
 const pluginFormats = require('../core/plugin-formats');
 const attribution = require('../core/attribution');
+const appsFolder = require('../core/apps-folder');
+const { breakdown } = require('../core/breakdown');
 
 const isDev = process.argv.includes('--dev');
 let win;
@@ -37,6 +39,9 @@ let pluginInventory = null;
 let lastPluginFormats = null;
 let byAppJob = null; // in-flight "System Data by app" scan, shared by the views that ask
 let lastByApp = null;
+let lastBreakdown = null; // measured disk breakdown + Applications folder contents
+let breakdownJob = null;
+let lastInstallerCopies = null;
 const plans = new Map(); // appPath → last uninstall plan shown to the user
 const jobs = new Map();
 let jobSeq = 0;
@@ -221,6 +226,45 @@ function validRoots(roots) {
   return (roots || []).filter((r) => typeof r === 'string' && path.isAbsolute(r) && fs.existsSync(r));
 }
 
+/** System Data attributed to apps; one shared in-flight job, cached until something is removed. */
+function getByApp(refresh = false) {
+  if (lastByApp && !refresh) return Promise.resolve(lastByApp);
+  if (!byAppJob) {
+    byAppJob = (async () => {
+      if (!installedApps || refresh) installedApps = await uninstall.listApps();
+      if (!pluginInventory) pluginInventory = await identifyInstalledPlugins();
+      const fullDiskAccess = disk.hasFullDiskAccess();
+      const res = await attribution.scanByApp({
+        apps: installedApps,
+        plugins: pluginInventory,
+        home: HOME,
+        fullDiskAccess,
+        measure: (paths, opts) => measureAll(paths, opts),
+        findAppFiles: uninstall.findAppFiles,
+        pluginDirs: pluginDirs(HOME),
+        onProgress: (p) => send('job:progress', { mode: 'by-app', ...p, filesSeen: p.done ?? 0, bytesSeen: 0 }),
+      });
+      const iconDir = path.join(app.getPath('userData'), 'app-icons');
+      const limit = pool(6);
+      await Promise.all(
+        res.owners.map((o) =>
+          limit(async () => {
+            const a = o.appPath && installedApps.find((x) => x.path === o.appPath);
+            if (a) o.icon = await uninstall.appIcon(a, iconDir).catch(() => null);
+            // Which items Silt may move to the Trash from here (leftovers only).
+            o.items = o.items.slice(0, 60).map((i) => ({ ...i, removable: o.kind === 'leftover' && uninstall.checkUninstallable(i.path, HOME).ok }));
+          }),
+        ),
+      );
+      lastByApp = res;
+      return res;
+    })().finally(() => {
+      byAppJob = null;
+    });
+  }
+  return byAppJob;
+}
+
 function registerIpc() {
   ipcMain.handle('system:overview', async () => {
     const [machine, capacity, apfs, snapshots] = await Promise.all([
@@ -230,7 +274,7 @@ function registerIpc() {
       disk.localSnapshots(),
     ]);
     const fullDiskAccess = disk.hasFullDiskAccess();
-    const evaluation = evaluate({ capacity, apfs, snapshots, hidden: lastHidden, fullDiskAccess });
+    const evaluation = evaluate({ capacity, apfs, snapshots, hidden: lastHidden, fullDiskAccess, appsFolder: lastBreakdown });
     return { machine, capacity, apfs, snapshots, fullDiskAccess, home: HOME, evaluation, grade: grade(evaluation.score), hidden: lastHidden };
   });
 
@@ -363,47 +407,80 @@ function registerIpc() {
     logCleanup({ source: 'plugins', name: `${format} plug-ins`, bytes: res.bytes, count: res.moved });
     pluginInventory = null;
     lastByApp = null;
+    lastBreakdown = null;
     return res;
   });
 
   // System Data attributed to the apps (and leftovers) it belongs to.
-  ipcMain.handle('data:by-app', async (_e, { refresh } = {}) => {
-    if (lastByApp && !refresh) return lastByApp;
-    if (!byAppJob) {
-      byAppJob = (async () => {
-        if (!installedApps || refresh) installedApps = await uninstall.listApps();
-        if (!pluginInventory) pluginInventory = await identifyInstalledPlugins();
+  ipcMain.handle('data:by-app', async (_e, { refresh } = {}) => getByApp(refresh));
+
+  // Measured disk breakdown: Applications folder, System Data, your files, the rest.
+  ipcMain.handle('disk:breakdown', async (_e, { refresh } = {}) => {
+    if (lastBreakdown && !refresh) return lastBreakdown;
+    if (!breakdownJob) {
+      breakdownJob = (async () => {
+        const [byApp, capacity, apfs] = await Promise.all([getByApp(refresh), disk.capacity(), disk.apfsVolumes()]);
+        // Applications folder, including apps nested in vendor folders.
+        const tops = fs.readdirSync('/Applications', { withFileTypes: true }).filter((e) => e.isDirectory() && !e.name.endsWith('.app') && !e.name.startsWith('.'));
+        const nested = tops.flatMap((e) => appsFolder.appsInside(path.join('/Applications', e.name)));
+        const appSizes = await measureAll(['/Applications', ...nested], { depthFor: (p) => (p === '/Applications' ? 1 : 0) });
+        const apps = appsFolder.listAppsFolder(appSizes);
+        for (const item of apps.items.filter((i) => i.kind === 'content' && i.bytes > 1e9)) {
+          const v = appsFolder.versionedFolders(item.path);
+          if (!v) continue;
+          const older = v.older.flatMap((o) => o.paths);
+          const sz = await measureAll(older);
+          item.versions = { latest: v.latest, older: v.older.map((o) => ({ version: o.version, paths: o.paths, bytes: o.paths.reduce((s, p) => s + (sz.get(p)?.bytes ?? 0), 0) })) };
+        }
+        // Your home folder outside Library.
         const fullDiskAccess = disk.hasFullDiskAccess();
-        const res = await attribution.scanByApp({
-          apps: installedApps,
-          plugins: pluginInventory,
-          home: HOME,
-          fullDiskAccess,
-          measure: (paths, opts) => measureAll(paths, opts),
-          findAppFiles: uninstall.findAppFiles,
-          pluginDirs: pluginDirs(HOME),
-          onProgress: (p) => send('job:progress', { mode: 'by-app', ...p, filesSeen: p.done ?? 0, bytesSeen: 0 }),
-        });
-        const iconDir = path.join(app.getPath('userData'), 'app-icons');
-        const limit = pool(6);
-        await Promise.all(
-          res.owners.map((o) =>
-            limit(async () => {
-              const a = o.appPath && installedApps.find((x) => x.path === o.appPath);
-              if (a) o.icon = await uninstall.appIcon(a, iconDir).catch(() => null);
-              // Which items Silt may move to the Trash from here (leftovers only).
-              o.items = o.items.slice(0, 60).map((i) => ({ ...i, removable: o.kind === 'leftover' && uninstall.checkUninstallable(i.path, HOME).ok }));
-            }),
-          ),
-        );
-        lastByApp = res;
-        return res;
+        const homeKids = fs.readdirSync(HOME).filter((n) => n !== 'Library').map((n) => path.join(HOME, n));
+        const homeSizes = await measureAll(homeKids, { excludeNames: fullDiskAccess ? null : ['Containers', 'Group Containers'] });
+        const homeItems = homeKids.map((p) => ({ path: p, name: path.basename(p), bytes: homeSizes.get(p)?.bytes ?? 0 })).filter((i) => i.bytes > 0).sort((a, b) => b.bytes - a.bytes);
+        const homeFiles = homeItems.reduce((s, i) => s + i.bytes, 0);
+        const libraryDir = path.join(HOME, 'Library');
+        const homeClaims = byApp.owners.flatMap((o) => o.allItems ?? o.items).filter((i) => isWithin(i.path, HOME) && !isWithin(i.path, libraryDir)).reduce((s, i) => s + i.bytes, 0);
+        // Local copies of iCloud Drive and cloud-drive files (Dropbox, Google Drive, OneDrive…).
+        const cloudPaths = ['Mobile Documents', 'CloudStorage'].map((n) => path.join(libraryDir, n)).filter((p) => fs.existsSync(p));
+        const cloudSizes = await measureAll(cloudPaths);
+        const cloud = cloudPaths.reduce((s, p) => s + (cloudSizes.get(p)?.bytes ?? 0), 0);
+        const parts = breakdown({ capacity, apfs, applications: apps.total, systemData: byApp.total, homeFiles, homeClaims, cloud });
+        lastBreakdown = { ...parts, applications: apps, home: homeItems.slice(0, 12), measuredAt: Date.now(), fullDiskAccess, installerCopies: lastInstallerCopies };
+        return lastBreakdown;
       })().finally(() => {
-        byAppJob = null;
+        breakdownJob = null;
       });
     }
-    return byAppJob;
+    return breakdownJob;
   });
+
+  // Folders that duplicate a library you already installed (e.g. a sample library's installer data).
+  ipcMain.handle('apps:installer-copies', async () => {
+    const b = lastBreakdown;
+    const candidates = [
+      ...(b?.applications.items.filter((i) => i.kind === 'content' && i.bytes > 1e9).map((i) => i.path) ?? []),
+      ...['Downloads', 'Desktop', 'Documents'].flatMap((d) => {
+        try {
+          return fs.readdirSync(path.join(HOME, d), { withFileTypes: true }).filter((e) => e.isDirectory() && !e.name.startsWith('.')).map((e) => path.join(HOME, d, e.name));
+        } catch {
+          return [];
+        }
+      }),
+    ];
+    const roots = ['/Applications', '/Library/Application Support', '/Users/Shared', path.join(HOME, 'Library', 'Application Support'), ...['Downloads', 'Desktop', 'Documents', 'Music'].map((d) => path.join(HOME, d))].filter((r) => fs.existsSync(r));
+    const res = await startWorker('large', {
+      roots,
+      minBytes: 50e6,
+      limit: 100000,
+      skip: protectedSkips(),
+      skipNames: ['node_modules', '.git', 'scratch-workspaces', 'DerivedData', '.Trash', 'Caches'],
+    });
+    if (res.type !== 'done' || res.cancelled) return { cancelled: true };
+    lastInstallerCopies = appsFolder.installerCopies(res.files, candidates);
+    if (lastBreakdown) lastBreakdown.installerCopies = lastInstallerCopies;
+    return lastInstallerCopies;
+  });
+
 
   // Move folders Silt couldn't match to an installed app to the Trash.
   ipcMain.handle('data:trash-leftovers', async (_e, paths) => {
@@ -421,6 +498,7 @@ function registerIpc() {
     const res = await trashWithAdmin(chosen, 'Silt needs your password to move leftover system files to the Trash.');
     logCleanup({ source: 'leftovers', name: 'Leftovers', bytes: res.bytes, count: res.moved });
     lastByApp = null;
+    lastBreakdown = null;
     return res;
   });
 
@@ -493,6 +571,7 @@ function registerIpc() {
     }
     plans.delete(appPath);
     lastByApp = null;
+    lastBreakdown = null;
     logCleanup({ source: 'uninstall', name: plan.app.name, bytes: results.reduce((s, r) => s + (r.ok ? r.bytes : 0), 0), count: results.filter((r) => r.ok).length });
     if (results.some((r) => r.ok && r.path === plan.app.path)) installedApps = installedApps.filter((a) => a.path !== plan.app.path);
     return { results, moved: results.filter((r) => r.ok).length, failed: results.filter((r) => !r.ok).length, bytes: results.reduce((s, r) => s + (r.ok ? r.bytes : 0), 0) };
@@ -544,6 +623,11 @@ function registerIpc() {
     if (!ok) return { cancelled: true };
     const res = await trashPaths(paths, { trashItem: (p) => shell.trashItem(p), sizeHint: map });
     logCleanup({ source: 'files', bytes: res.bytes, count: res.moved });
+    if (res.moved) {
+      lastBreakdown = null;
+      lastByApp = null;
+      if (lastInstallerCopies) lastInstallerCopies = lastInstallerCopies.filter((c) => fs.existsSync(c.path));
+    }
     return res;
   });
 
@@ -583,6 +667,16 @@ function registerIpc() {
     if (typeof p === 'string' && path.isAbsolute(p) && fs.existsSync(p)) shell.showItemInFolder(p);
   });
 
+  ipcMain.handle('fda:status', async () => disk.hasFullDiskAccess());
+  ipcMain.handle('app:relaunch', async () => {
+    app.relaunch();
+    app.exit(0);
+  });
+  // The Silt.app bundle (packaged) so it can be dragged into the Full Disk Access list.
+  ipcMain.handle('shell:reveal-app', async () => {
+    const bundle = app.isPackaged ? path.resolve(process.execPath, '..', '..', '..') : process.execPath;
+    shell.showItemInFolder(bundle);
+  });
   ipcMain.handle('shell:open-fda-settings', async () => {
     await shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles');
   });
@@ -604,7 +698,7 @@ function registerIpc() {
     const [capacity, apfs, snapshots] = await Promise.all([disk.capacity(), disk.apfsVolumes(), disk.localSnapshots()]);
     const machine = await disk.machine();
     const fullDiskAccess = disk.hasFullDiskAccess();
-    const evaluation = evaluate({ capacity, apfs, snapshots, hidden: lastHidden, fullDiskAccess });
+    const evaluation = evaluate({ capacity, apfs, snapshots, hidden: lastHidden, fullDiskAccess, appsFolder: lastBreakdown });
     const md = buildMarkdownReport({ machine, capacity, apfs, snapshots, hidden: lastHidden, evaluation, home: HOME });
     const { canceled, filePath } = await dialog.showSaveDialog(win, {
       defaultPath: path.join(HOME, 'Desktop', `Silt storage report ${new Date().toISOString().slice(0, 10)}.md`),
@@ -638,6 +732,8 @@ function registerIpc() {
     electron: process.versions.electron,
     dark: nativeTheme.shouldUseDarkColors,
     platform: process.platform,
+    packaged: app.isPackaged,
+    fdaPromptInDev: !!process.env.SILT_FDA_PROMPT,
     tmpdir: os.tmpdir(),
   }));
 }

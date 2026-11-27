@@ -22,6 +22,9 @@ module.exports = async function snapAll(win, app, dir) {
   await waitFor(win, `!!document.querySelector('.ring')`, 30000);
   // Wait for the System Data scan to finish (the Rescan button re-enables).
   await waitFor(win, `[...document.querySelectorAll('.view-head .btn')].some(b => b.textContent.includes('Rescan') && !b.disabled)`, 180000);
+  // Then the measured disk breakdown and the installer-copy search.
+  await waitFor(win, `!!document.querySelector('.legend-link')`, 300000);
+  await waitFor(win, `document.body.innerText.includes('second copy') || document.body.innerText.includes('isn’t apps')`, 600000);
   await wait(800);
   const routes = ['overview', 'hidden', 'projects', 'explorer', 'large', 'dupes', 'uninstall', 'about'];
   const only = process.env.SILT_SNAP_ONLY ? process.env.SILT_SNAP_ONLY.split(',') : null;
@@ -34,6 +37,14 @@ module.exports = async function snapAll(win, app, dir) {
       await win.webContents.executeJavaScript(`(() => { const s = document.querySelector('input.search'); s.value = 'mainstage'; s.dispatchEvent(new Event('input')); s.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' })); })()`);
       await waitFor(win, `!!document.querySelector('.uninstall-bar')`, 180000);
       await waitFor(win, `[...document.querySelectorAll('.app-sort .faint')].some(e => e.textContent.startsWith('Sizes include'))`, 120000);
+      await wait(1200);
+      fs.writeFileSync(path.join(dir, `${i + 1}-uninstall.png`), (await win.webContents.capturePage()).toPNG());
+      await win.webContents.executeJavaScript(`[...document.querySelectorAll('.app-sort .seg')].find(b => b.textContent.startsWith('Not apps')).click()`);
+      await waitFor(win, `!!document.querySelector('#app-list .app-item')`, 120000);
+      await win.webContents.executeJavaScript(`document.querySelector('#app-list .app-item').click()`);
+      await wait(800);
+      fs.writeFileSync(path.join(dir, `${i + 1}-uninstall-notapps.png`), (await win.webContents.capturePage()).toPNG());
+      continue;
     }
     if (routes[i] === 'projects') {
       await waitFor(win, `!!document.querySelector('.project-row')`, 240000);

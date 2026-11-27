@@ -1,5 +1,6 @@
 import { h, bytes, button, busy, toast, viewHead, cleanupToast } from '../ui.js';
 import { changesCard } from './history.js';
+import { showFdaPrompt } from './fda-prompt.js';
 
 export function renderOverview(ctx) {
   const { api, state } = ctx;
@@ -25,7 +26,7 @@ export function renderOverview(ctx) {
     {},
     viewHead('Overview', `${o.machine.model} · macOS ${o.machine.macos}`, exportBtn, rescan),
     !o.fullDiskAccess ? fdaBanner(api) : null,
-    h('div', { class: 'grid hero' }, scoreCard(o), capacityCard(o)),
+    h('div', { class: 'grid hero' }, scoreCard(o), capacityCard(o, ctx)),
     state.hidden?.history ? changesCard(ctx, { compact: true }) : null,
     h('div', { class: 'section-title' }, 'What to do'),
     h('div', { class: 'card' }, findingsList(ctx)),
@@ -36,8 +37,8 @@ export function fdaBanner(api) {
   return h(
     'div',
     { class: 'banner' },
-    h('div', { class: 'grow' }, h('b', {}, 'Full Disk Access is off. '), 'Silt can’t measure Mail, Messages, app containers or iPhone backups without it. In development, grant it to the app that launched Silt (e.g. Terminal), then reopen Silt.'),
-    button('Open Settings', { onClick: () => api.openFdaSettings() }),
+    h('div', { class: 'grow' }, h('b', {}, 'Full Disk Access is off. '), 'Silt can’t measure app containers, Mail, Messages or iPhone backups without it.'),
+    button('Turn On…', { onClick: () => showFdaPrompt(api) }),
   );
 }
 
@@ -61,26 +62,43 @@ function scoreCard(o) {
   );
 }
 
-function capacityCard(o) {
+const SEG_COLOR = { macos: 'var(--c6)', volumes: 'var(--c3)', applications: 'var(--c2)', systemData: 'var(--c1)', files: 'var(--c4)', cloud: 'var(--info)', other: 'var(--c5)' };
+const SEG_TITLE = {
+  macos: 'The sealed macOS system volume',
+  volumes: 'Preboot, Recovery, VM (swap) and Update volumes',
+  applications: 'Everything inside the Applications folder, as macOS counts it, including folders that aren’t apps',
+  systemData: 'Library folders: app support files, caches, sound libraries, plug-ins (see System Data › By app)',
+  files: 'Your home folder outside Library',
+  cloud: 'Downloaded copies of iCloud Drive and cloud-drive files (Dropbox, Google Drive, OneDrive…)',
+  other: 'Used space Silt can’t read: app containers without Full Disk Access, local snapshots, and system files only macOS can see',
+};
+
+function capacityCard(o, ctx) {
   const c = o.capacity;
   const used = c.total - c.free;
-  const vols = o.apfs?.volumes ?? [];
-  const role = (r) => vols.filter((v) => v.role === r).reduce((s, v) => s + v.bytes, 0);
-  const system = role('System');
-  const overhead = role('Preboot') + role('Recovery') + role('VM') + role('Update');
-  const data = role('Data') || used - system - overhead;
-  const hidden = o.hidden?.totals?.explained ?? 0;
-  const purgeable = Math.min(c.purgeable, data);
-  // Inside the Data volume: hidden/system data we explained vs everything else.
-  const hiddenPart = Math.min(hidden, Math.max(0, data - purgeable));
-  const rest = Math.max(0, data - hiddenPart - purgeable);
-  const segs = [
-    { label: 'macOS', bytes: system, color: 'var(--c6)' },
-    { label: 'System volumes', bytes: overhead, color: 'var(--c3)', title: 'Preboot, Recovery, VM and Update volumes' },
-    { label: 'Library & hidden data', bytes: hiddenPart, color: 'var(--c1)', title: 'Everything the System Data scan measured: caches, app data, developer files, backups…' },
-    { label: 'Apps & files', bytes: rest, color: 'var(--c2)' },
-    { label: 'Purgeable', bytes: purgeable, color: 'var(--c4)' },
-  ].filter((s) => s.bytes > 0);
+  const b = ctx.state.breakdown;
+  let segs;
+  let note = null;
+  if (b) {
+    const route = { applications: () => ctx.go('uninstall', { uninstallTab: b.applications.notApps > 1e9 ? 'notapps' : null }), systemData: () => ctx.go('hidden'), files: () => ctx.go('explorer', { explorerPath: o.home }) };
+    segs = b.segments.filter((s) => s.bytes > 0).map((s) => ({ ...s, color: SEG_COLOR[s.id], title: SEG_TITLE[s.id], onClick: route[s.id] }));
+    note = [
+      'Each part is measured on its own, so nothing is counted twice.',
+      b.applications.notApps > 1e9 ? `Applications includes ${bytes(b.applications.notApps)} of folders that aren’t apps.` : null,
+      !b.fullDiskAccess ? 'Turn on Full Disk Access to measure app containers, which are under “Not measured” for now.' : null,
+    ].filter(Boolean).join(' ');
+  } else {
+    const vols = o.apfs?.volumes ?? [];
+    const role = (r) => vols.filter((v) => v.role === r).reduce((s, v) => s + v.bytes, 0);
+    const system = role('System');
+    const overhead = role('Preboot') + role('Recovery') + role('VM') + role('Update');
+    segs = [
+      { id: 'macos', label: 'macOS', bytes: system, color: SEG_COLOR.macos, title: SEG_TITLE.macos },
+      { id: 'volumes', label: 'System volumes', bytes: overhead, color: SEG_COLOR.volumes, title: SEG_TITLE.volumes },
+      { id: 'rest', label: 'Apps, System Data & files', bytes: Math.max(0, used - system - overhead), color: 'var(--c2)' },
+    ].filter((s) => s.bytes > 0);
+    note = ctx.state.breakdownLoading || o.hidden ? 'Measuring Applications, System Data and your files…' : 'The full breakdown appears after the System Data scan.';
+  }
   return h(
     'div',
     { class: 'card' },
@@ -102,10 +120,14 @@ function capacityCard(o) {
     h(
       'div',
       { class: 'legend' },
-      ...segs.map((s) => h('span', {}, h('i', { style: { background: s.color } }), s.label, ' ', h('b', { class: 'num' }, bytes(s.bytes)))),
+      ...segs.map((s) =>
+        s.onClick
+          ? h('button', { class: 'legend-link', onclick: s.onClick, title: s.title }, h('i', { style: { background: s.color } }), s.label, ' ', h('b', { class: 'num' }, bytes(s.bytes)))
+          : h('span', { title: s.title || '' }, h('i', { style: { background: s.color } }), s.label, ' ', h('b', { class: 'num' }, bytes(s.bytes))),
+      ),
       h('span', {}, h('i', { style: { background: 'var(--surface-2)', border: '1px solid var(--border-strong)' } }), 'Free ', h('b', { class: 'num' }, bytes(c.free))),
     ),
-    !o.hidden ? h('p', { class: 'faint', style: { marginBottom: 0 } }, 'Hidden-data numbers appear after the System Data scan finishes.') : null,
+    note ? h('p', { class: 'faint', style: { marginBottom: 0 } }, note) : null,
   );
 }
 
@@ -167,6 +189,16 @@ function actionsFor(f, ctx) {
     });
     return [button('Details', { kind: 'ghost small', onClick: () => ctx.go('hidden', { focusItem: f.itemId }) }), b];
   }
+  if (a.type === 'trash-path') {
+    const b = button('Move to Trash…', { kind: 'small', iconName: 'trash' });
+    b.onclick = busy(b, async () => {
+      const res = await api.trashPaths([a.path]);
+      cleanupToast(res);
+      if (res && !res.cancelled && res.moved) ctx.refreshBreakdown?.();
+    });
+    return [button('Show in Finder', { kind: 'ghost small', onClick: () => api.reveal(a.path) }), b];
+  }
+  if (a.type === 'go') return [button('Review', { kind: 'small', onClick: () => ctx.go(a.route, a.opts || {}) })];
   if (a.type === 'reveal') return [button('Explore', { kind: 'small', onClick: () => ctx.go('explorer', { explorerPath: a.path }) })];
   if (a.type === 'fda') return [button('Open Settings', { kind: 'small', onClick: () => api.openFdaSettings() })];
   return [];

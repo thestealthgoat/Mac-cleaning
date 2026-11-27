@@ -1,4 +1,5 @@
 import { h, icon, bytes, setHome, toast } from './ui.js';
+import { maybePromptForFda } from './views/fda-prompt.js';
 import { renderOverview } from './views/overview.js';
 import { renderHidden } from './views/hidden.js';
 import { renderExplorer } from './views/explorer.js';
@@ -49,7 +50,7 @@ export function render() {
   const r = ROUTES.find((x) => x.id === state.route) || ROUTES[0];
   const same = view.dataset.route === r.id;
   const scroll = same ? view.scrollTop : 0;
-  const node = r.render({ api, state, go, render, refreshOverview, runHiddenScan });
+  const node = r.render({ api, state, go, render, refreshOverview, runHiddenScan, refreshBreakdown });
   if (!same) node.classList.add('view-enter'); // animate only when switching screens
   view.replaceChildren(node);
   view.dataset.route = r.id;
@@ -92,6 +93,28 @@ export async function refreshOverview() {
   render();
 }
 
+/**
+ * Measured disk breakdown (Applications, System Data, your files) and then the
+ * slower search for installer copies. Runs after the System Data scan so the
+ * two don't compete for the disk.
+ */
+export async function refreshBreakdown() {
+  if (state.breakdownLoading) return;
+  state.breakdownLoading = true;
+  render();
+  try {
+    state.breakdown = await api.diskBreakdown({ refresh: !!state.breakdown });
+    render();
+    const copies = await api.installerCopies();
+    if (Array.isArray(copies) && state.breakdown) state.breakdown.installerCopies = copies;
+  } catch (err) {
+    state.breakdownError = err.message || String(err);
+  } finally {
+    state.breakdownLoading = false;
+  }
+  await refreshOverview();
+}
+
 export async function runHiddenScan() {
   if (state.hiddenScanning) return;
   state.hiddenScanning = true;
@@ -104,6 +127,7 @@ export async function runHiddenScan() {
     state.hiddenScanning = false;
   }
   await refreshOverview(); // re-evaluates the score with the new data
+  if (!state.breakdown) refreshBreakdown();
 }
 
 api.onHiddenProgress((p) => {
@@ -170,4 +194,8 @@ api.onMenu(async (m) => {
 
 renderNav();
 render();
-refreshOverview().then(() => runHiddenScan());
+api.getSettings().then((s) => (state.settings = s)).catch(() => {});
+refreshOverview().then(() => {
+  maybePromptForFda(api, state.overview);
+  runHiddenScan();
+});

@@ -32,13 +32,45 @@ const KIND_LABEL = {
   leftover: 'No installed app found',
 };
 
-const APPLE_NAMES = /^(com\.apple\.|group\.com\.apple\.|apple)|^(addressbook|callhistorydb|callhistorytransactions|clouddocs|crashreporter|knowledge|mobilesync|icloud|fileprovider|differentialprivacy|appstore|accounts|animoji|calendars?|contacts|dock|facetime|siri|spotlight|ubiquity|syncservices|safari|mail|messages|homekit|photos|podcasts|books|biome|screentime|familycircle|coresimulator|keychains|metadata|cloudkit|assistant|assistants|identityservices|sharedfilelist|soundbanks|sounds|midi drivers|midi devices|impulse responses|apple loops index|diagnostics|diagnosticreports|systemmigration|com\.crashlytics|backgroundassets|staged|tmp|siritts|geoservices|sharedimagecache|familysettings|passkit|wallet|weather|stocks|maps|news|translation|voicememos|freeform|journal|reminders|notes|shortcuts|findmy|screensaver|desktoppictures|coresimulator|xcode)$/i;
+const APPLE_NAMES = /^(com\.apple\.|group\.com\.apple\.|apple)|^(addressbook|callhistorydb|callhistorytransactions|clouddocs|crashreporter|knowledge|mobilesync|icloud|fileprovider|differentialprivacy|appstore|accounts|animoji|calendars?|contacts|dock|facetime|siri|spotlight|ubiquity|syncservices|safari|mail|messages|homekit|photos|podcasts|books|biome|screentime|familycircle|coresimulator|keychains|metadata|cloudkit|assistant|assistants|identityservices|sharedfilelist|soundbanks|sounds|midi drivers|midi devices|impulse responses|apple loops index|diagnostics|diagnosticreports|systemmigration|com\.crashlytics|backgroundassets|staged|tmp|siritts|geoservices|sharedimagecache|familysettings|preferences|fonts|receipts|cookies|suggestions|personalizationportrait|homekit|sharing|trial|spelling|frameworks|keyboard layouts|input methods|services|scripts|colorpickers|compositions|printers|screen savers|speech|favorites|preferencepanes|internet plug-ins|autosave information|daemon containers|launchagents|launchdaemons|privilegedhelpertools|extensions|filesystems|staged extensions|systemextensions|coreanalytics|updates|security|kerberos plugins|managed preferences|modem scripts|opendirectory|perl|quicktime|resources|rules|webserver|documentation|image capture|graphics|video|automator|bundles|contextual menu items|folders|log|temp|apple loops|workflows|calendarservers|bluetooth|corestorage|dictionaries|messages|mail|accessibility|containermanager|frontboard|intelligenceplatform|liveactivities|daemondata|finance|groupcontainersalias|studentmanager|sync|caches|intents|passkit|wallet|weather|stocks|maps|news|translation|voicememos|freeform|journal|reminders|notes|shortcuts|findmy|screensaver|desktoppictures|coresimulator|xcode)$/i;
 
 // Caches of command-line developer tools (installed with npm, Homebrew, pip…, not as apps).
-const DEV_TOOLS = /^(pnpm|npm|yarn|node-gyp|ms-playwright|puppeteer|cypress|electron-builder|electron|homebrew|cocoapods|carthage|org\.swift\.swiftpm|swiftpm|nuitka|dotslash|ffmpeg[\w-]*|pip|pypoetry|poetry|uv|ruff|mypy|pre-commit|deno|bun|go-build|gopls|gradle|typescript|prisma|turbo|vercel|next|sentry-cli|rustup|cargo|jdk|maven|ccache|sccache|bazel|esbuild|vite|jest|huggingface|torch|whisper|ollama|lm-studio|node|nvm|fnm|volta|pyenv|conda|mamba|composer|bundler|gem|terraform|pulumi|docker|act|codex|gh|git|vscode-[\w-]+)$/i;
+const DEV_TOOLS = /^(python|r|julia|jupyter|androidstudio|android|pnpm|npm|yarn|node-gyp|ms-playwright|puppeteer|cypress|electron-builder|electron|homebrew|cocoapods|carthage|org\.swift\.swiftpm|swiftpm|nuitka|dotslash|ffmpeg[\w-]*|pip|pypoetry|poetry|uv|ruff|mypy|pre-commit|deno|bun|go-build|gopls|gradle|typescript|prisma|turbo|vercel|next|sentry-cli|rustup|cargo|jdk|maven|ccache|sccache|bazel|esbuild|vite|jest|huggingface|torch|whisper|ollama|lm-studio|node|nvm|fnm|volta|pyenv|conda|mamba|composer|bundler|gem|terraform|pulumi|docker|act|codex|gh|git|vscode-[\w-]+)$/i;
 
 // Folder names that belong to a specific Apple developer app.
 const ALIASES = { developer: 'com.apple.dt.Xcode', xcode: 'com.apple.dt.Xcode' };
+
+// Folders measured as single units, outside the per-child roots below. Not "System Data"
+// in Silt's sense: iCloud Drive and cloud-drive folders are your files (measured separately).
+const NOT_SYSTEM_DATA = ['Mobile Documents', 'CloudStorage'];
+// Fixed locations outside Library that macOS also counts as System Data.
+const SYSTEM_EXTRAS = { '/opt/homebrew': 'tools', '/usr/local': 'tools', '/private/var/folders': 'apple' };
+
+/**
+ * Everything else directly inside ~/Library and /Library (fonts, preferences,
+ * Python, pnpm, Developer…), plus Homebrew and per-user temporary files.
+ * Each becomes a unit of its own. App containers need Full Disk Access.
+ */
+function extraUnits(home = os.homedir(), fullDiskAccess = true, rootList = roots(home, fullDiskAccess)) {
+  const out = [];
+  const L = path.join(home, 'Library');
+  const skip = new Set([...rootList, ...NOT_SYSTEM_DATA.map((n) => path.join(L, n)), path.join(L, 'Containers'), path.join(L, 'Group Containers')]);
+  for (const dir of [L, '/Library']) {
+    let names = [];
+    try {
+      names = fs.readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const n of names) {
+      const p = path.join(dir, n);
+      if (n.startsWith('.') || skip.has(p)) continue;
+      out.push({ path: p });
+    }
+  }
+  for (const [p, kind] of Object.entries(SYSTEM_EXTRAS)) if (fs.existsSync(p)) out.push({ path: p, kind });
+  return out;
+}
 
 /** Library locations whose contents macOS reports as System Data. */
 function roots(home = os.homedir(), fullDiskAccess = true) {
@@ -162,7 +194,9 @@ function attribute({ apps, appFiles, units, claimSize = new Map(), pluginDirs = 
     if (rest < minBytes) continue;
     const name = path.basename(u.path);
     const app = ownerApp(name, apps);
-    if (isPluginish(u.path)) give({ key: 'plugins', kind: 'plugins', name: 'Audio plug-ins' }, u.path, rest);
+    if (u.kind === 'tools') give({ key: 'tools', kind: 'tools', name: 'Developer tools & frameworks' }, u.path, rest);
+    else if (u.kind === 'apple') give({ key: 'apple', kind: 'apple', name: 'macOS & Apple apps' }, u.path, rest);
+    else if (isPluginish(u.path)) give({ key: 'plugins', kind: 'plugins', name: 'Audio plug-ins' }, u.path, rest);
     else if (app) give({ key: `app:${app.path}`, kind: 'app', name: app.name, appPath: app.path, members: [app.name] }, u.path, rest);
     else if (APPLE_NAMES.test(name)) give({ key: 'apple', kind: 'apple', name: 'macOS & Apple apps' }, u.path, rest);
     else if (pluginVendors.has(vendorKey(name))) give({ key: `vendor:${name}`, kind: 'shared', name: `${name} (plug-in content)`, members: ['your plug-ins'] }, u.path, rest);
@@ -206,20 +240,22 @@ async function scanByApp({ apps, plugins = [], home = os.homedir(), fullDiskAcce
     }
   }
   const rootList = roots(home, fullDiskAccess).filter((r) => fs.existsSync(r));
+  const extras = extraUnits(home, fullDiskAccess, rootList);
   const claimed = [...new Set([...appFiles.values()].flat().filter((i) => !['app', 'documents', 'plugins'].includes(i.category)).map((i) => i.path))];
   onProgress?.({ phase: 'measuring', total: rootList.length });
   let done = 0;
-  const sizes = await measure([...rootList, ...claimed], {
+  const sizes = await measure([...rootList, ...extras.map((e) => e.path), ...claimed], {
     depthFor: (p) => (rootList.includes(p) ? 1 : 0),
     excludeNames: fullDiskAccess ? null : ['Containers', 'Group Containers'],
     onDone: () => onProgress?.({ phase: 'measuring', done: ++done, total: rootList.length }),
   });
   const units = [];
   for (const [p, v] of sizes) if (rootList.includes(path.dirname(p)) && !rootList.includes(p)) units.push({ path: p, bytes: v.bytes });
+  for (const e of extras) units.push({ ...e, bytes: sizes.get(e.path)?.bytes ?? 0 });
   const claimSize = new Map(claimed.map((p) => [p, sizes.get(p)?.bytes ?? 0]));
   const pluginVendors = new Set(plugins.flatMap((p) => [vendorKey(p.vendor || ''), vendorKey(p.idVendor || '')]).filter((k) => k.length >= 3));
   const result = attribute({ apps, appFiles, units, claimSize, pluginDirs, pluginVendors });
   return { ...result, roots: rootList, fullDiskAccess, scannedAt: Date.now() };
 }
 
-module.exports = { scanByApp, attribute, ownerApp, roots, KIND_LABEL, APPLE_NAMES, DEV_TOOLS };
+module.exports = { scanByApp, attribute, ownerApp, roots, extraUnits, KIND_LABEL, APPLE_NAMES, DEV_TOOLS, NOT_SYSTEM_DATA };
