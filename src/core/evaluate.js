@@ -111,6 +111,21 @@ function evaluate({ capacity, apfs, snapshots, hidden, fullDiskAccess = true }) 
         action: item.command ? { type: 'command', command: item.command } : { type: 'clean', itemId: item.id },
       });
     }
+    // Apple's sound library in both the old (/Library) and new (Logic Pro Library.bundle) layout.
+    const audio = hidden.items.find((i) => i.id === 'audio-content');
+    const legacy = audio?.paths.find((p) => p.path === '/Library/Application Support/Logic');
+    const bundle = audio?.paths.find((p) => p.path.endsWith('/Music/Logic Pro Library.bundle'));
+    if (legacy?.bytes > 10 * GB && bundle?.bytes > 10 * GB) {
+      findings.push({
+        id: 'logic-library-twice',
+        severity: 'warning',
+        title: `Apple’s sound library may be installed twice (${formatBytes(legacy.bytes)} + ${formatBytes(bundle.bytes)})`,
+        detail: 'Newer Logic Pro and MainStage keep instruments and loops in “Logic Pro Library.bundle” in your Music folder; older versions used /Library/Application Support/Logic. Having both large usually means a leftover copy. Check in Logic Pro or MainStage › Sound Library › Open Sound Library Manager which one is in use before removing anything.',
+        bytes: Math.min(legacy.bytes, bundle.bytes),
+        itemId: 'audio-content',
+        action: { type: 'reveal', path: legacy.path },
+      });
+    }
     const bigInfo = hidden.items.filter((i) => !i.cleanable && i.uniqueBytes > 20 * GB).slice(0, 4);
     for (const item of bigInfo) {
       findings.push({

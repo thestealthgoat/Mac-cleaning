@@ -133,16 +133,20 @@ function summarize(items) {
   let explained = 0;
   let reclaimableSafe = 0;
   let reclaimableReview = 0;
+  let regrowing = 0;
   for (const item of items) {
     for (const rec of item.paths) {
       if (!rec.nestedIn) explained += rec.bytes;
       if (item.cleanable && !rec.nestedInCleanable) {
         if (item.safety === 'safe') reclaimableSafe += rec.bytes;
         else if (item.safety === 'review') reclaimableReview += rec.bytes;
+        if (item.regrows && item.safety !== 'info') regrowing += rec.bytes;
       }
     }
   }
-  return { explained, reclaimableSafe, reclaimableReview };
+  // `lasting` is what stays freed after cleaning; `regrowing` refills with normal use.
+  const lasting = Math.max(0, reclaimableSafe + reclaimableReview - regrowing);
+  return { explained, reclaimableSafe, reclaimableReview, regrowing, lasting };
 }
 
 /** Children of `dir` taken from an existing du map (only direct children). */
@@ -185,6 +189,7 @@ async function scanHidden({ home = os.homedir(), onProgress, fullDiskAccess = tr
       minAgeDays: entry.minAgeDays ?? null,
       why: entry.why,
       cleanable: CLEANABLE.has(entry.action),
+      regrows: !!entry.regrows,
       needsFullDiskAccess: skipped.length > 0,
       paths: recs,
     };

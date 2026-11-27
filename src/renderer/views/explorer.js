@@ -188,7 +188,7 @@ function drawTreemap(el, rows, total, ctx) {
 function row({ c, bytes: size, done, partial, needsAccess }, total, ctx, reload) {
   const { api } = ctx;
   const canOpen = c.isDir && !c.isSymlink;
-  const trash = button('', { kind: 'ghost small', iconName: 'trash', title: 'Move to Trash' });
+  const trash = button('Move to Trash', { kind: 'ghost small', iconName: 'trash', title: 'Move to Trash' });
   trash.onclick = busy(trash, async (e) => {
     e.stopPropagation();
     const res = await api.trashPaths([c.path]);
@@ -212,8 +212,8 @@ function row({ c, bytes: size, done, partial, needsAccess }, total, ctx, reload)
     h(
       'div',
       { class: 'row-acts' },
-      canOpen ? button('', { kind: 'ghost small', iconName: 'caret', title: 'Open', onClick: () => ctx.go('explorer', { explorerPath: c.path }) }) : null,
-      button('', { kind: 'ghost small', iconName: 'reveal', title: `Show in Finder · modified ${age(c.mtimeMs)}`, onClick: () => api.reveal(c.path) }),
+      canOpen ? button('Open', { kind: 'ghost small', title: 'Open', onClick: () => ctx.go('explorer', { explorerPath: c.path }) }) : null,
+      button('Show in Finder', { kind: 'ghost small', title: `Show in Finder · modified ${age(c.mtimeMs)}`, onClick: () => api.reveal(c.path) }),
       trash,
     ),
   );

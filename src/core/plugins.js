@@ -219,7 +219,7 @@ async function scanPlugins({ home = os.homedir(), measure, onProgress } = {}) {
 
   return all
     .map((v) => {
-      const plugins = [...v.plugins.values()].map((p) => ({ ...p, bytes: p.paths.reduce((s, x) => s + bytesOf(x), 0) })).sort((a, b) => a.name.localeCompare(b.name));
+      const plugins = [...v.plugins.values()].map((p) => ({ ...p, bytes: p.paths.reduce((s, x) => s + bytesOf(x), 0), files: p.paths.map((x) => ({ path: x, format: FORMAT_BY_EXT[path.extname(x).slice(1).toLowerCase()] ?? null, bytes: bytesOf(x) })) })).sort((a, b) => a.name.localeCompare(b.name));
       const content = v.content.map((c) => ({ ...c, bytes: bytesOf(c.path) })).filter((c) => c.bytes > 0).sort((a, b) => b.bytes - a.bytes);
       const pluginBytes = plugins.reduce((s, p) => s + p.bytes, 0);
       const contentBytes = content.reduce((s, c) => s + c.bytes, 0);
@@ -245,4 +245,4 @@ async function identifyInstalledPlugins({ home = os.homedir() } = {}) {
   return [...byProduct.values()];
 }
 
-module.exports = { scanPlugins, identifyInstalledPlugins, identify, vendorKey, listBundles, KNOWN_AUDIO_VENDORS };
+module.exports = { scanPlugins, identifyInstalledPlugins, identify, vendorKey, listBundles, pluginDirs, KNOWN_AUDIO_VENDORS };

@@ -8,7 +8,8 @@ const { Worker } = require('worker_threads');
 
 const disk = require('../core/disk');
 const { scanHidden, needsFda, measureAll } = require('../core/hidden');
-const { scanPlugins, identifyInstalledPlugins } = require('../core/plugins');
+const { scanPlugins, identifyInstalledPlugins, pluginDirs } = require('../core/plugins');
+const { installedApps: listInstalledApps } = require('../core/apps');
 const uninstall = require('../core/uninstall');
 const { isWithin } = require('../core/paths');
 const { listDir, sizeOf } = require('../core/size');
@@ -23,6 +24,9 @@ const { buildMenu, setupAboutPanel } = require('./menu');
 const windowState = require('./window-state');
 const Settings = require('./settings');
 const { createUpdater } = require('./updater');
+const History = require('../core/history');
+const pluginFormats = require('../core/plugin-formats');
+const attribution = require('../core/attribution');
 
 const isDev = process.argv.includes('--dev');
 let win;
@@ -30,6 +34,9 @@ let lastHidden = null;
 let lastProjects = null;
 let installedApps = null; // cached app list for the Uninstall view
 let pluginInventory = null;
+let lastPluginFormats = null;
+let byAppJob = null; // in-flight "System Data by app" scan, shared by the views that ask
+let lastByApp = null;
 const plans = new Map(); // appPath → last uninstall plan shown to the user
 const jobs = new Map();
 let jobSeq = 0;
@@ -69,8 +76,15 @@ function createWindow() {
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
   windowState.track(win);
   win.once('ready-to-show', () => {
+    if (process.env.SILT_SNAP_DIR) {
+      // Screenshot runs stay in the background: no focus, no Dock icon, click-through.
+      app.dock?.hide();
+      win.setIgnoreMouseEvents(true);
+      win.showInactive();
+      require('./dev-snapshots')(win, app, process.env.SILT_SNAP_DIR);
+      return;
+    }
     win.show();
-    if (process.env.SILT_SNAP_DIR) require('./dev-snapshots')(win, app, process.env.SILT_SNAP_DIR);
   });
   win.webContents.on('console-message', (e) => {
     if (isDev || process.env.SILT_SNAP_DIR) console.log(`[renderer:${e.level}] ${e.message}`);
@@ -96,9 +110,43 @@ app.on('second-instance', () => {
 
 let settings;
 let updater;
+let historyFile;
+
+/** Move items ({ path, bytes }) to the Trash, using the administrator prompt for root-owned ones. */
+async function trashWithAdmin(items, prompt) {
+  const adminItems = items.filter((i) => !uninstall.userCanMove(i.path));
+  const results = [];
+  for (const i of items.filter((x) => !adminItems.includes(x))) {
+    try {
+      await shell.trashItem(i.path);
+      results.push({ path: i.path, ok: true, bytes: i.bytes });
+    } catch {
+      adminItems.push(i);
+    }
+  }
+  if (adminItems.length) {
+    const as = uninstall.adminAppleScript(adminItems.map((i) => i.path), { home: HOME, prompt });
+    const res = await run('/usr/bin/osascript', ['-e', as], { timeout: 30 * 60 * 1000 });
+    for (const i of adminItems) {
+      const moved = res.code === 0 && !fs.existsSync(i.path);
+      results.push({ path: i.path, ok: moved, bytes: moved ? i.bytes : 0, reason: moved ? null : res.stderr.includes('-128') ? 'Cancelled at the password prompt.' : res.stderr.trim() || 'Could not move' });
+    }
+  }
+  return { results, moved: results.filter((r) => r.ok).length, failed: results.filter((r) => !r.ok).length, bytes: results.reduce((s, r) => s + (r.ok ? r.bytes : 0), 0) };
+}
+
+/** Log what Silt freed, for "what grew since" and the lifetime total. Never fails a cleanup. */
+function logCleanup(entry) {
+  try {
+    History.save(historyFile, History.recordCleanup(History.load(historyFile), entry));
+  } catch {
+    /* history is a convenience */
+  }
+}
 
 app.whenReady().then(() => {
   settings = Settings.create(app.getPath('userData'));
+  historyFile = path.join(app.getPath('userData'), 'history.json');
   updater = createUpdater({ settings, send, getWindow: () => win });
   setupAboutPanel();
   buildMenu({ send, isDev, onCheckUpdates: () => updater.check({ interactive: true }) });
@@ -189,6 +237,14 @@ function registerIpc() {
   ipcMain.handle('hidden:scan', async () => {
     const fullDiskAccess = disk.hasFullDiskAccess();
     lastHidden = await scanHidden({ fullDiskAccess, onProgress: (p) => send('hidden:progress', p) });
+    try {
+      const capacity = await disk.capacity();
+      const { state, view } = History.update(History.load(historyFile), lastHidden, capacity);
+      History.save(historyFile, state);
+      lastHidden.history = view;
+    } catch {
+      lastHidden.history = null;
+    }
     return lastHidden;
   });
 
@@ -278,7 +334,94 @@ function registerIpc() {
 
   ipcMain.handle('plugins:scan', async () => {
     const vendors = await scanPlugins({ measure: (p) => measureAll(p), onProgress: (p) => send('job:progress', { mode: 'plugins', ...p, filesSeen: p.done ?? 0, bytesSeen: 0 }) });
-    return { vendors, scannedAt: Date.now() };
+    const formats = pluginFormats.analyze(vendors, await listInstalledApps());
+    lastPluginFormats = formats;
+    return { vendors, formats, scannedAt: Date.now() };
+  });
+
+  // Move plug-in bundles of formats no installed app loads to the Trash.
+  ipcMain.handle('plugins:remove-formats', async (_e, { format, paths } = {}) => {
+    const group = lastPluginFormats?.unused.find((g) => g.format === format);
+    if (!group || !Array.isArray(paths)) throw new Error('Scan plug-ins first');
+    const dirs = pluginDirs(HOME);
+    // Only bundles Silt itself listed for this format, re-checked here.
+    const chosen = group.items.filter((i) => paths.includes(i.path) && pluginFormats.isRemovablePluginBundle(i.path, format, dirs) && fs.existsSync(i.path));
+    if (!chosen.length) return { moved: 0, failed: 0, bytes: 0, results: [] };
+    const total = chosen.reduce((s, i) => s + i.bytes, 0);
+    const adminItems = chosen.filter((i) => !uninstall.userCanMove(i.path));
+    const hosts = lastPluginFormats.hosts.join(', ');
+    const ok = await confirm({
+      message: `Move ${chosen.length} ${format} plug-in${chosen.length === 1 ? '' : 's'} to the Trash? About ${formatBytes(total)}.`,
+      detail: [
+        `None of the apps Silt found (${hosts}) load ${format} plug-ins. If you use another plug-in host Silt doesn’t know about, cancel.`,
+        'Everything goes to the Trash, so you can put it back until you empty the Trash. Your other formats of the same plug-ins are kept.',
+        adminItems.length ? `${adminItems.length} item${adminItems.length === 1 ? '' : 's'} need your administrator password; macOS will ask for it.` : null,
+      ].filter(Boolean).join('\n\n'),
+    });
+    if (!ok) return { cancelled: true };
+    const res = await trashWithAdmin(chosen, `Silt needs your password to move unused ${format} plug-ins to the Trash.`);
+    logCleanup({ source: 'plugins', name: `${format} plug-ins`, bytes: res.bytes, count: res.moved });
+    pluginInventory = null;
+    lastByApp = null;
+    return res;
+  });
+
+  // System Data attributed to the apps (and leftovers) it belongs to.
+  ipcMain.handle('data:by-app', async (_e, { refresh } = {}) => {
+    if (lastByApp && !refresh) return lastByApp;
+    if (!byAppJob) {
+      byAppJob = (async () => {
+        if (!installedApps || refresh) installedApps = await uninstall.listApps();
+        if (!pluginInventory) pluginInventory = await identifyInstalledPlugins();
+        const fullDiskAccess = disk.hasFullDiskAccess();
+        const res = await attribution.scanByApp({
+          apps: installedApps,
+          plugins: pluginInventory,
+          home: HOME,
+          fullDiskAccess,
+          measure: (paths, opts) => measureAll(paths, opts),
+          findAppFiles: uninstall.findAppFiles,
+          pluginDirs: pluginDirs(HOME),
+          onProgress: (p) => send('job:progress', { mode: 'by-app', ...p, filesSeen: p.done ?? 0, bytesSeen: 0 }),
+        });
+        const iconDir = path.join(app.getPath('userData'), 'app-icons');
+        const limit = pool(6);
+        await Promise.all(
+          res.owners.map((o) =>
+            limit(async () => {
+              const a = o.appPath && installedApps.find((x) => x.path === o.appPath);
+              if (a) o.icon = await uninstall.appIcon(a, iconDir).catch(() => null);
+              // Which items Silt may move to the Trash from here (leftovers only).
+              o.items = o.items.slice(0, 60).map((i) => ({ ...i, removable: o.kind === 'leftover' && uninstall.checkUninstallable(i.path, HOME).ok }));
+            }),
+          ),
+        );
+        lastByApp = res;
+        return res;
+      })().finally(() => {
+        byAppJob = null;
+      });
+    }
+    return byAppJob;
+  });
+
+  // Move folders Silt couldn't match to an installed app to the Trash.
+  ipcMain.handle('data:trash-leftovers', async (_e, paths) => {
+    const leftover = lastByApp?.owners.find((o) => o.key === 'leftover');
+    if (!leftover || !Array.isArray(paths)) throw new Error('Scan System Data by app first');
+    const chosen = leftover.items.filter((i) => paths.includes(i.path) && i.removable && uninstall.checkUninstallable(i.path, HOME).ok);
+    if (!chosen.length) return { moved: 0, failed: 0, bytes: 0, results: [] };
+    const total = chosen.reduce((s, i) => s + i.bytes, 0);
+    const names = chosen.slice(0, 8).map((i) => '• ' + i.path.replace(HOME, '~')).join('\n');
+    const ok = await confirm({
+      message: chosen.length === 1 ? `Move “${path.basename(chosen[0].path)}” to the Trash? ${formatBytes(total)}.` : `Move ${chosen.length} folders to the Trash? ${formatBytes(total)}.`,
+      detail: `Silt couldn’t match ${chosen.length === 1 ? 'this folder' : 'these folders'} to an installed app. Command-line tools and apps kept outside Applications can look like this too, so check the names.\n\n${names}${chosen.length > 8 ? `\n…and ${chosen.length - 8} more` : ''}\n\nEverything goes to the Trash, so you can put it back until you empty the Trash.`,
+    });
+    if (!ok) return { cancelled: true };
+    const res = await trashWithAdmin(chosen, 'Silt needs your password to move leftover system files to the Trash.');
+    logCleanup({ source: 'leftovers', name: 'Leftovers', bytes: res.bytes, count: res.moved });
+    lastByApp = null;
+    return res;
   });
 
   ipcMain.handle('apps:list', async (_e, { refresh } = {}) => {
@@ -349,6 +492,8 @@ function registerIpc() {
       }
     }
     plans.delete(appPath);
+    lastByApp = null;
+    logCleanup({ source: 'uninstall', name: plan.app.name, bytes: results.reduce((s, r) => s + (r.ok ? r.bytes : 0), 0), count: results.filter((r) => r.ok).length });
     if (results.some((r) => r.ok && r.path === plan.app.path)) installedApps = installedApps.filter((a) => a.path !== plan.app.path);
     return { results, moved: results.filter((r) => r.ok).length, failed: results.filter((r) => !r.ok).length, bytes: results.reduce((s, r) => s + (r.ok ? r.bytes : 0), 0) };
   });
@@ -379,6 +524,7 @@ function registerIpc() {
     });
     if (!ok) return { cancelled: true };
     const res = await trashPaths(targets, { trashItem: (p) => shell.trashItem(p), sizeHint: map });
+    logCleanup({ source: 'catalog', id: entry.id, name: entry.name, bytes: res.bytes, count: res.moved });
     return res;
   });
 
@@ -396,7 +542,9 @@ function registerIpc() {
       }`,
     });
     if (!ok) return { cancelled: true };
-    return trashPaths(paths, { trashItem: (p) => shell.trashItem(p), sizeHint: map });
+    const res = await trashPaths(paths, { trashItem: (p) => shell.trashItem(p), sizeHint: map });
+    logCleanup({ source: 'files', bytes: res.bytes, count: res.moved });
+    return res;
   });
 
   ipcMain.handle('trash:empty', async () => {
@@ -471,6 +619,13 @@ function registerIpc() {
   ipcMain.handle('update:status', async () => updater.status());
   ipcMain.handle('update:check', async () => updater.check({ interactive: false }));
   ipcMain.handle('update:install', async () => updater.promptRestart());
+  ipcMain.handle('history:clear', async () => {
+    const ok = await confirm({ message: 'Clear Silt’s storage history?', detail: 'Silt forgets past scan sizes and the record of what it cleaned. Nothing on your disk changes.', okLabel: 'Clear History' });
+    if (!ok) return { cancelled: true };
+    History.save(historyFile, History.empty());
+    if (lastHidden) lastHidden.history = null;
+    return { ok: true };
+  });
   ipcMain.handle('settings:get', async () => settings.all());
   ipcMain.handle('settings:set', async (_e, key, value) => {
     const all = settings.set(key, value);

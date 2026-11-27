@@ -47,7 +47,7 @@ export function renderAbout(ctx) {
           h('li', {}, 'Only “Empty Trash” is permanent, and it always asks first.'),
           h('li', {}, 'System folders, iCloud Drive, Mail, Messages, Keychains and Preferences are on a hard-coded deny list.'),
           h('li', {}, 'Tool-managed data (Docker, simulators, Homebrew, npm…) is reclaimed with the tool’s own command, shown to you in Terminal.'),
-          h('li', {}, 'No telemetry, no accounts, and nothing about your files ever leaves your Mac. The only network request is checking GitHub for a newer version, which you can turn off.'),
+          h('li', {}, 'No telemetry, no accounts, and nothing about your files ever leaves your Mac. The only network request is checking GitHub for a newer version, which you can turn off. Scan history is kept in Silt’s own folder on this Mac, and you can clear it from System Data.'),
         ),
         h('h3', {}, 'Why “System Data” is so big'),
         h(

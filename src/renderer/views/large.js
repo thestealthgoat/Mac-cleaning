@@ -144,7 +144,7 @@ export function renderLarge(ctx) {
                   h('td', { class: 'path', title: f.path }, tilde(dirname(f.path))),
                   h('td', { class: 'faint' }, age(f.mtimeMs)),
                   h('td', { class: 'r num' }, bytes(f.bytes)),
-                  h('td', {}, button('', { kind: 'ghost small', iconName: 'reveal', title: 'Show in Finder', onClick: () => api.reveal(f.path) })),
+                  h('td', {}, button('Show in Finder', { kind: 'ghost small', title: 'Show in Finder', onClick: () => api.reveal(f.path) })),
                 ),
               ),
             ),

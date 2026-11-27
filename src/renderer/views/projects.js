@@ -14,6 +14,10 @@ const DAY = 86400000;
 
 export function renderProjects(ctx) {
   const { state } = ctx;
+  if (state.projectsTab) {
+    ui.tab = state.projectsTab;
+    state.projectsTab = null;
+  }
   if (!state.projects && !ui.scanningProjects) scanProjects(ctx);
   if (ui.tab === 'plugins' && !state.plugins && !ui.scanningPlugins) scanPlugins(ctx);
 
@@ -173,12 +177,12 @@ function codeRow(p, max, ctx, isStale) {
       h('div', { class: 'faint num when' }, p.lastActive ? age(p.lastActive) : '—'),
       h('div', {}, h('div', { class: 'bar split' }, h('div', { style: { width: `${(p.bytes / max) * 100}%` } }, h('i', { style: { width: `${p.bytes ? Math.min(100, (p.artifactBytes / p.bytes) * 100) : 0}%` } })))),
       h('div', { class: 'size' }, bytes(p.bytes)),
-      h('div', { class: 'item-acts' }, p.artifactBytes > 0 ? clean : null, button('', { kind: 'ghost small', iconName: 'reveal', title: 'Show in Finder', onClick: () => api.reveal(p.path) })),
+      h('div', { class: 'item-acts' }, p.artifactBytes > 0 ? clean : null, button('Show in Finder', { kind: 'ghost small', title: 'Show in Finder', onClick: () => api.reveal(p.path) })),
     ),
     h(
       'div',
       { class: 'item-body' },
-      h('div', { class: 'path-row' }, h('span', { class: 'mono' }, tilde(p.path)), button('', { kind: 'ghost small', iconName: 'explorer', title: 'Open in Explorer', onClick: () => ctx.go('explorer', { explorerPath: p.path }) })),
+      h('div', { class: 'path-row' }, h('span', { class: 'mono' }, tilde(p.path)), button('Explore', { kind: 'ghost small', title: 'Open in Explorer', onClick: () => ctx.go('explorer', { explorerPath: p.path }) })),
       p.artifacts.length
         ? h(
             'div',
@@ -265,8 +269,8 @@ function mediaRow(m, max, ctx) {
       h(
         'div',
         { class: 'item-acts' },
-        button('', { kind: 'ghost small', iconName: 'reveal', title: 'Show in Finder', onClick: () => api.reveal(m.path) }),
-        m.isFolder ? button('', { kind: 'ghost small', iconName: 'explorer', title: 'Open in Explorer', onClick: () => ctx.go('explorer', { explorerPath: m.path }) }) : null,
+        button('Show in Finder', { kind: 'ghost small', title: 'Show in Finder', onClick: () => api.reveal(m.path) }),
+        m.isFolder ? button('Explore', { kind: 'ghost small', title: 'Open in Explorer', onClick: () => ctx.go('explorer', { explorerPath: m.path }) }) : null,
       ),
     ),
   );
@@ -286,9 +290,66 @@ function pluginsTab(ctx) {
     'div',
     {},
     h('div', { class: 'card' }, h('div', { class: 'totals' }, stat(String(pluginCount), `plug-ins from ${vendors.filter((v) => v.plugins.length).length} vendors`), stat(bytes(contentBytes), 'in sound libraries & vendor data'), stat(bytes(orphanBytes), 'from vendors with no plug-ins installed', 'review'))),
+    formatsCard(ctx),
     h('div', { class: 'section-title' }, 'By vendor'),
     h('div', { class: 'card' }, h('div', { class: 'items' }, ...vendors.map((v) => vendorRow(v, max, ctx)))),
     h('p', { class: 'faint', style: { marginTop: 14 } }, 'Libraries are matched to vendors by folder name in Application Support, /Users/Shared, Music and Documents. Libraries you relocated to another drive are not counted. Uninstall plug-ins with the vendor’s installer or manager app so licences and leftovers are handled properly.'),
+  );
+}
+
+const FORMAT_HOSTS = {
+  AAX: 'Pro Tools (and Media Composer)',
+  VST: 'Ableton Live, Cubase, REAPER, FL Studio, Bitwig and other VST hosts',
+  VST3: 'Ableton Live, Cubase, Studio One, REAPER, Bitwig and other VST3 hosts',
+  CLAP: 'Bitwig, REAPER, FL Studio and Studio One',
+};
+
+/** Plug-in formats none of the installed apps can load. */
+function formatsCard(ctx) {
+  const f = ctx.state.plugins?.formats;
+  if (!f || f.noHosts || !f.unused.length) return null;
+  const rows = f.unused.map((g) => {
+    const key = `format:${g.format}`;
+    const only = g.items.filter((i) => !i.otherFormats.length).length;
+    const btn = button('Move to Trash…', { kind: 'small', iconName: 'trash' });
+    btn.onclick = busy(btn, async () => {
+      const res = await ctx.api.removePluginFormats({ format: g.format, paths: g.items.map((i) => i.path) });
+      if (res?.error) return toast(res.error);
+      cleanupToast(res);
+      if (res && !res.cancelled && res.moved) scanPlugins(ctx);
+    });
+    const list = ui.open.has(key)
+      ? h(
+          'div',
+          { class: 'chips', style: { gridColumn: '1 / -1', marginTop: 4 } },
+          ...g.items.slice(0, 200).map((i) => h('span', { class: 'chip', title: tilde(i.path) }, i.plugin, h('i', {}, i.otherFormats.length ? `also ${i.otherFormats.join(' ')}` : `${g.format} only`))),
+        )
+      : null;
+    return h(
+      'div',
+      { class: 'format-row' },
+      h(
+        'div',
+        {},
+        h('b', {}, `${g.format} — ${g.count} plug-in${g.count === 1 ? '' : 's'}`),
+        h('div', { class: 'faint' }, `Loaded by ${FORMAT_HOSTS[g.format] || 'other hosts'}. ${only ? `${only} exist only as ${g.format}.` : 'Every one is also installed in a format your apps load.'}`),
+        h('button', { class: 'link', onclick: () => (ui.open.has(key) ? ui.open.delete(key) : ui.open.add(key), ctx.render()) }, ui.open.has(key) ? 'Hide list' : 'Show list'),
+      ),
+      h('span', { class: 'size' }, bytes(g.bytes)),
+      btn,
+      list,
+    );
+  });
+  return h(
+    'div',
+    {},
+    h('div', { class: 'section-title' }, 'Formats your apps don’t load'),
+    h(
+      'div',
+      { class: 'card format-card' },
+      h('p', { class: 'muted', style: { marginTop: 0 } }, `Plug-in hosts on this Mac: ${f.hosts.join(', ')}. They load ${f.loadable.join(', ')}. Installers often copy every format, so these copies sit unused. If you use a plug-in host Silt didn’t find, keep them.`),
+      ...rows,
+    ),
   );
 }
 
@@ -319,7 +380,7 @@ function vendorRow(v, max, ctx) {
       h('div', { class: 'faint num when' }, v.contentBytes ? `${bytes(v.contentBytes)} libraries` : ''),
       h('div', { class: 'bar' }, h('div', { style: { width: `${(v.bytes / max) * 100}%` } })),
       h('div', { class: 'size' }, bytes(v.bytes)),
-      h('div', { class: 'item-acts' }, v.content[0] ? button('', { kind: 'ghost small', iconName: 'explorer', title: 'Open largest library in Explorer', onClick: () => ctx.go('explorer', { explorerPath: v.content[0].path }) }) : null),
+      h('div', { class: 'item-acts' }, v.content[0] ? button('Explore', { kind: 'ghost small', title: 'Open largest library in Explorer', onClick: () => ctx.go('explorer', { explorerPath: v.content[0].path }) }) : null),
     ),
     h(
       'div',
@@ -329,7 +390,7 @@ function vendorRow(v, max, ctx) {
             'div',
             { class: 'paths' },
             h('div', { class: 'faint', style: { margin: '2px 0' } }, 'Sound libraries & support files:'),
-            ...v.content.map((c) => h('div', { class: 'path-row' }, h('span', { class: 'mono', title: c.path }, tilde(c.path)), h('span', { class: 'size faint' }, bytes(c.bytes)), button('', { kind: 'ghost small', iconName: 'reveal', title: 'Show in Finder', onClick: () => api.reveal(c.path) }), button('', { kind: 'ghost small', iconName: 'explorer', title: 'Open in Explorer', onClick: () => ctx.go('explorer', { explorerPath: c.path }) }))),
+            ...v.content.map((c) => h('div', { class: 'path-row' }, h('span', { class: 'mono', title: c.path }, tilde(c.path)), h('span', { class: 'size faint' }, bytes(c.bytes)), button('Show in Finder', { kind: 'ghost small', title: 'Show in Finder', onClick: () => api.reveal(c.path) }), button('Explore', { kind: 'ghost small', title: 'Open in Explorer', onClick: () => ctx.go('explorer', { explorerPath: c.path }) }))),
           )
         : null,
       realPlugins.length

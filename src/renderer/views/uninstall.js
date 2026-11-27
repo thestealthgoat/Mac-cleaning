@@ -1,12 +1,22 @@
-import { h, bytes, icon, button, busy, viewHead, tilde, toast } from '../ui.js';
+import { h, bytes, icon, button, busy, viewHead, tilde, toast, age } from '../ui.js';
 
-const ui = { query: '', apps: null, loading: false, selected: null, plan: null, planning: false, checked: new Set(), openGroups: new Set() };
+const UNUSED_DAYS = 180;
+const isUnused = (a) => a.lastUsed != null && Date.now() - a.lastUsed > UNUSED_DAYS * 86400000;
+
+const ui = { sort: 'size', byApp: null, pendingTarget: null, query: '', apps: null, loading: false, selected: null, plan: null, planning: false, checked: new Set(), openGroups: new Set() };
 
 const GROUP_ORDER = ['app', 'support', 'caches', 'prefs', 'state', 'containers', 'logs', 'launch', 'shared', 'vendor', 'plugins', 'documents'];
 
 export function renderUninstall(ctx) {
   const { api } = ctx;
+  // Opened from System Data › By app with an app chosen.
+  if (ctx.state.uninstallTarget) {
+    ui.pendingTarget = ctx.state.uninstallTarget;
+    ctx.state.uninstallTarget = null;
+    ui.query = '';
+  }
   if (!ui.apps && !ui.loading) loadApps(ctx);
+  else if (ui.apps && ui.pendingTarget) openPending(ctx);
 
   const search = h('input', {
     type: 'text',
@@ -29,12 +39,13 @@ export function renderUninstall(ctx) {
   });
 
   const list = h('div', { class: 'app-list', id: 'app-list' });
+  const sortBar = h('div', { class: 'app-sort', id: 'app-sort' });
   const detail = h('div', { class: 'app-detail', id: 'app-detail' });
   const view = h(
     'div',
     {},
     viewHead('Uninstall', 'Remove an app together with everything it left around your Mac. Files other software still needs, and your own documents, are kept unless you choose otherwise.'),
-    h('div', { class: 'uninstall-grid' }, h('div', { class: 'card app-col' }, search, list), detail),
+    h('div', { class: 'uninstall-grid' }, h('div', { class: 'card app-col' }, search, sortBar, list), detail),
   );
   requestAnimationFrame(() => {
     paintList(ctx);
@@ -50,7 +61,9 @@ async function loadApps(ctx, refresh = false) {
   } finally {
     ui.loading = false;
   }
+  loadFootprints(ctx);
   if (ctx.state.route === 'uninstall') {
+    if (ui.pendingTarget) return openPending(ctx);
     paintList(ctx);
     // "uninstall mainstage" with a single match: open it straight away.
     const f = filtered();
@@ -58,16 +71,60 @@ async function loadApps(ctx, refresh = false) {
   }
 }
 
+function openPending(ctx) {
+  const target = ui.apps?.find((a) => a.path === ui.pendingTarget);
+  ui.pendingTarget = null;
+  if (target) requestAnimationFrame(() => select(target, ctx));
+}
+
+/** How much System Data each app keeps (shared with the System Data › By app view). */
+async function loadFootprints(ctx) {
+  try {
+    const res = await ctx.api.dataByApp();
+    ui.byApp = res.perApp || {};
+    if (ctx.state.route === 'uninstall') paintList(ctx);
+  } catch {
+    /* sizes stay app-only */
+  }
+}
+
+const dataOf = (a) => ui.byApp?.[a.path]?.total ?? 0;
+const footprint = (a) => a.bytes + dataOf(a);
+
 function filtered() {
   const q = ui.query.trim().toLowerCase().replace(/^uninstall\s+/, '');
   const apps = ui.apps || [];
-  if (!q) return [...apps].sort((a, b) => b.bytes - a.bytes);
+  if (!q && ui.sort === 'unused') return apps.filter(isUnused).sort((a, b) => footprint(b) - footprint(a));
+  if (!q) return [...apps].sort((a, b) => footprint(b) - footprint(a));
   return apps
     .filter((a) => a.name.toLowerCase().includes(q) || a.fileName.toLowerCase().includes(q) || a.id.toLowerCase().includes(q))
-    .sort((a, b) => Number(!a.name.toLowerCase().startsWith(q)) - Number(!b.name.toLowerCase().startsWith(q)) || b.bytes - a.bytes);
+    .sort((a, b) => Number(!a.name.toLowerCase().startsWith(q)) - Number(!b.name.toLowerCase().startsWith(q)) || footprint(b) - footprint(a));
+}
+
+function paintSort(ctx) {
+  const el = document.getElementById('app-sort');
+  if (!el) return;
+  const unused = (ui.apps || []).filter(isUnused);
+  const tab = (id, label) => h('button', { class: `seg ${ui.sort === id ? 'active' : ''}`, onclick: () => ((ui.sort = id), paintList(ctx)) }, label);
+  el.replaceChildren(
+    ...[
+    tab('size', 'All apps'),
+    tab('unused', `Unused for 6 months${ui.apps ? ` (${unused.length})` : ''}`),
+    ui.sort === 'unused' && unused.length ? h('span', { class: 'faint' }, `${bytes(unused.reduce((s, a) => s + footprint(a), 0))} in apps you haven’t used since ${new Date(Date.now() - UNUSED_DAYS * 86400000).toLocaleDateString(undefined, { month: 'short', year: 'numeric' })}, including their System Data`) : null,
+      ui.sort === 'unused' ? null : h('span', { class: 'faint' }, ui.byApp ? 'Sizes include each app’s System Data.' : 'Measuring each app’s System Data…'),
+    ].filter(Boolean),
+  );
+}
+
+function lastUsedLabel(a) {
+  if (a.lastUsed == null) return null;
+  const when = new Date(a.lastUsed).toLocaleDateString();
+  const title = a.lastUsedApprox ? `macOS has no “last opened” date for this app; it last saved its settings on ${when}.` : `Last opened ${when}`;
+  return h('span', { class: isUnused(a) ? 'stale' : '', title }, `${a.lastUsedApprox ? 'used' : 'opened'} ${age(a.lastUsed)}`);
 }
 
 function paintList(ctx) {
+  paintSort(ctx);
   const el = document.getElementById('app-list');
   if (!el) return;
   if (!ui.apps) {
@@ -76,7 +133,7 @@ function paintList(ctx) {
   }
   const apps = filtered();
   if (!apps.length) {
-    el.replaceChildren(h('div', { class: 'empty', style: { padding: '24px 8px' } }, h('p', {}, `No app matches “${ui.query}”.`)));
+    el.replaceChildren(h('div', { class: 'empty', style: { padding: '24px 8px' } }, h('p', {}, ui.query ? `No app matches “${ui.query}”.` : 'Every app here has been used in the last 6 months.')));
     return;
   }
   el.replaceChildren(
@@ -85,8 +142,17 @@ function paintList(ctx) {
         'button',
         { class: `app-item ${ui.selected?.path === a.path ? 'active' : ''}`, onclick: () => select(a, ctx), title: tilde(a.path) },
         a.icon ? h('img', { src: a.icon, alt: '' }) : icon('package', 'app-fallback'),
-        h('span', { class: 'app-name' }, a.name, a.version ? h('i', {}, a.version) : null),
-        h('span', { class: 'size' }, bytes(a.bytes)),
+        h(
+          'span',
+          { class: 'app-text' },
+          h('span', { class: 'app-name' }, a.name, a.version ? h('i', {}, a.version) : null),
+          h(
+            'span',
+            { class: 'app-meta' },
+            ...[dataOf(a) ? `${bytes(a.bytes)} app + ${bytes(dataOf(a))} System Data` : `${bytes(a.bytes)} app`, lastUsedLabel(a)].filter(Boolean).flatMap((x, i) => (i ? [' · ', x] : [x])),
+          ),
+        ),
+        h('span', { class: 'size' }, bytes(footprint(a))),
       ),
     ),
   );
@@ -137,6 +203,9 @@ function paintDetail(ctx) {
   const keptShared = items.filter((i) => !ui.checked.has(i.path) && i.shared.length).reduce((s, i) => s + i.bytes, 0);
   const keptDocs = items.filter((i) => !ui.checked.has(i.path) && i.category === 'documents').reduce((s, i) => s + i.bytes, 0);
   const needsPassword = chosen.some((i) => i.admin);
+  const appBytes = items.filter((i) => i.category === 'app').reduce((s, i) => s + i.bytes, 0);
+  const sysData = items.filter((i) => i.category !== 'app' && i.category !== 'documents').reduce((s, i) => s + i.bytes, 0);
+  const chosenSys = chosen.filter((i) => i.category !== 'app').reduce((s, i) => s + i.bytes, 0);
 
   const run = button(`Uninstall ${a.name}`, { kind: 'primary danger-fill', iconName: 'trash', disabled: !chosen.length || plan.running });
   run.onclick = busy(run, async () => {
@@ -158,6 +227,14 @@ function paintDetail(ctx) {
       { class: 'card' },
       head,
       plan.running ? h('div', { class: 'banner', style: { margin: '14px 0 0' } }, h('div', { class: 'grow' }, h('b', {}, `${a.name} is running. `), 'Quit it before uninstalling.')) : null,
+      sysData
+        ? h(
+            'div',
+            { class: 'sysdata-note' },
+            h('b', {}, `${bytes(sysData)} of System Data. `),
+            `${a.name}.app itself is ${bytes(appBytes)}. The rest is support files, caches and content it keeps in your Library, which macOS counts as System Data rather than Applications. Every item is listed below.`,
+          )
+        : null,
       !plan.fullDiskAccess ? h('div', { class: 'faint', style: { marginTop: 10 } }, 'Without Full Disk Access, sandbox containers can’t be checked, so a few small files may be missed.') : null,
       ...byCat.map(({ c, items: list }) => group(c, list, ctx)),
     ),
@@ -167,7 +244,7 @@ function paintDetail(ctx) {
       h(
         'div',
         { class: 'grow' },
-        h('div', { class: 'bar-total' }, `Frees ${bytes(total)}`, h('span', { class: 'faint' }, ` · ${chosen.length} item${chosen.length === 1 ? '' : 's'} to the Trash`)),
+        h('div', { class: 'bar-total' }, `Frees ${bytes(total)}`, h('span', { class: 'faint' }, ` · ${chosen.length} item${chosen.length === 1 ? '' : 's'} to the Trash${chosenSys ? ` · ${bytes(chosenSys)} of it System Data` : ''}`)),
         h(
           'div',
           { class: 'faint' },
@@ -221,7 +298,7 @@ function group(category, list, ctx) {
         i.admin ? h('span', { class: 'pill lock tag', title: 'Owned by the system; macOS will ask for your password.' }, 'Password') : null,
         i.shared.length ? h('span', { class: 'pill review tag' }, 'Shared') : null,
         h('span', { class: 'size' }, bytes(i.bytes)),
-        button('', { kind: 'ghost small', iconName: 'reveal', title: 'Show in Finder', onClick: (e) => (e.preventDefault(), api.reveal(i.path)) }),
+        button('Show in Finder', { kind: 'ghost small', onClick: (e) => (e.preventDefault(), api.reveal(i.path)) }),
       ),
     ),
     !open ? button(`Show all ${list.length}`, { kind: 'ghost small', onClick: () => (ui.openGroups.add(category), paintDetail(ctx)) }) : null,

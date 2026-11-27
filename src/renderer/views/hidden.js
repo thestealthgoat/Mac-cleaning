@@ -1,5 +1,9 @@
 import { h, bytes, icon, button, busy, toast, viewHead, safetyPill, tilde, cleanupToast } from '../ui.js';
 import { fdaBanner } from './overview.js';
+import { changesCard, deltaMap, deltaTag, regrowthNote } from './history.js';
+import { byAppView } from './byapp.js';
+
+const mode = { view: 'app' };
 
 const GROUP_ORDER = ['system', 'caches', 'developer', 'apple', 'apps', 'user'];
 const open = new Set();
@@ -9,11 +13,20 @@ export function renderHidden(ctx) {
   const hd = state.hidden;
   const o = state.overview;
   const rescan = button(state.hiddenScanning ? 'Scanning…' : 'Rescan', { iconName: 'scan', disabled: state.hiddenScanning, onClick: () => ctx.runHiddenScan() });
+  const switcher = h(
+    'div',
+    { class: 'segmented', role: 'tablist', 'aria-label': 'Group System Data' },
+    ...[
+      ['app', 'By app'],
+      ['location', 'By location'],
+    ].map(([id, label]) => h('button', { role: 'tab', 'aria-selected': String(mode.view === id), class: mode.view === id ? 'active' : '', onclick: () => ((mode.view = id), ctx.render()) }, label)),
+  );
   const head = viewHead(
     'System Data',
     'The places macOS and apps quietly fill up — the stuff Storage settings lumps into “System Data”. Everything Silt removes goes to the Trash first.',
-    rescan,
+    mode.view === 'location' ? rescan : null,
   );
+  if (mode.view === 'app') return h('div', {}, head, h('div', { class: 'toolbar' }, switcher), o && !o.fullDiskAccess ? fdaBanner(api) : null, byAppView(ctx));
   if (state.focusItem) {
     open.add(state.focusItem);
   }
@@ -23,6 +36,7 @@ export function renderHidden(ctx) {
       'div',
       {},
       head,
+      h('div', { class: 'toolbar' }, switcher),
       h('div', { class: 'card' }, h('div', { class: 'muted' }, 'Measuring hidden folders…'), h('div', { class: 'progress' }, h('div', { 'data-hidden-progress': '', style: { width: '5%' } }))),
     );
   }
@@ -33,6 +47,7 @@ export function renderHidden(ctx) {
     'div',
     {},
     head,
+    h('div', { class: 'toolbar' }, switcher),
     o && !o.fullDiskAccess ? fdaBanner(api) : null,
     h(
       'div',
@@ -44,7 +59,15 @@ export function renderHidden(ctx) {
         h('div', { class: 'total safe' }, h('b', { class: 'num' }, bytes(hd.totals.reclaimableSafe)), h('span', {}, 'safe to reclaim (regenerates)')),
         h('div', { class: 'total review' }, h('b', { class: 'num' }, bytes(hd.totals.reclaimableReview)), h('span', {}, 'worth reviewing')),
       ),
+      hd.totals.regrowing
+        ? h(
+            'p',
+            { class: 'faint', style: { marginTop: 12, marginBottom: 0 } },
+            `Of the space you can clean, ${bytes(hd.totals.regrowing)} refills with normal use (caches, logs, build files) and ${bytes(hd.totals.lasting)} stays freed. Items marked “Comes back” are worth cleaning when you need room, not as a routine.`,
+          )
+        : null,
     ),
+    changesCard(ctx),
     o ? systemCard(ctx) : null,
     ...groups.map(({ g, items }) =>
       h('div', {}, h('div', { class: 'section-title' }, items[0].groupLabel), h('div', { class: 'card' }, h('div', { class: 'items' }, ...items.map((i) => itemRow(i, Math.max(1, ...items.map((x) => x.bytes)), ctx))))),
@@ -125,16 +148,18 @@ function itemRow(item, max, ctx) {
         icon('caret', 'caret'),
         h('span', { class: 'nm' }, item.name),
         safetyPill(item.safety),
+        item.regrows && item.safety !== 'info' ? h('span', { class: 'pill regrow', title: 'This refills with normal use. Cleaning frees the space for a while, not for good.' }, 'Comes back') : null,
         item.needsFullDiskAccess ? h('span', { class: 'pill lock', title: 'Some locations need Full Disk Access to measure' }, 'Needs access') : null,
       ),
       h('div', { class: `bar ${item.safety}` }, h('div', { style: { width: `${Math.max(1, (item.bytes / max) * 100)}%` } })),
-      h('div', { class: 'size', title: item.partial ? 'Some folders could not be read; the real size may be larger.' : '' }, bytes(item.bytes), item.partial ? '+' : ''),
+      h('div', { class: 'size', title: item.partial ? 'Some folders could not be read; the real size may be larger.' : '' }, bytes(item.bytes), item.partial ? '+' : '', deltaTag(deltaMap(ctx.state.hidden?.history).get(item.id))),
       h('div', { class: 'item-acts' }, ...itemActions(item, ctx)),
     ),
     h(
       'div',
       { class: 'item-body' },
       h('div', {}, item.why),
+      regrowthNote(item, ctx.state.hidden?.history),
       nested ? h('div', { class: 'faint', style: { marginTop: 4 } }, 'Already counted inside a larger item above, so it is not added to the totals twice.') : null,
       item.minAgeDays ? h('div', { class: 'faint', style: { marginTop: 4 } }, `Cleaning only removes items older than ${item.minAgeDays} days.`) : null,
       item.command
@@ -142,7 +167,7 @@ function itemRow(item, max, ctx) {
             'div',
             { class: 'cmd' },
             item.command,
-            button('', { kind: 'ghost small', iconName: 'copy', title: 'Copy command', onClick: async () => (await api.copyCommand(item.command), toast('Command copied.')) }),
+            button('Copy', { kind: 'ghost small', iconName: 'copy', onClick: async () => (await api.copyCommand(item.command), toast('Command copied.')) }),
           )
         : null,
       item.breakdown?.length ? breakdown(item, ctx) : null,
@@ -157,8 +182,8 @@ function itemRow(item, max, ctx) {
               { class: 'path-row' },
               h('span', { class: 'mono', title: p.path }, tilde(p.path)),
               h('span', { class: 'size faint' }, bytes(p.bytes)),
-              button('', { kind: 'ghost small', iconName: 'reveal', title: 'Show in Finder', onClick: () => api.reveal(p.path) }),
-              button('', { kind: 'ghost small', iconName: 'explorer', title: 'Open in Explorer', onClick: () => ctx.go('explorer', { explorerPath: p.path }) }),
+              button('Show in Finder', { kind: 'ghost small', onClick: () => api.reveal(p.path) }),
+              button('Explore', { kind: 'ghost small', onClick: () => ctx.go('explorer', { explorerPath: p.path }) }),
             ),
           ),
         item.paths.length > 30 ? h('div', { class: 'faint' }, `…and ${item.paths.length - 30} more locations`) : null,
@@ -182,7 +207,7 @@ function breakdown(item, ctx) {
         b.orphan ? h('span', { class: 'pill orphan', title: 'Silt could not find an installed app this folder belongs to. It may be left over from an app you deleted — check before removing.' }, 'No matching app') : null,
         h('div', { class: 'bar info', style: { flex: 1 } }, h('div', { style: { width: `${(b.bytes / top) * 100}%` } })),
         h('span', { class: 'size faint' }, bytes(b.bytes)),
-        button('', { kind: 'ghost small', iconName: 'explorer', title: 'Open in Explorer', onClick: () => ctx.go('explorer', { explorerPath: b.path }) }),
+        button('Explore', { kind: 'ghost small', onClick: () => ctx.go('explorer', { explorerPath: b.path }) }),
       ),
     ),
   );

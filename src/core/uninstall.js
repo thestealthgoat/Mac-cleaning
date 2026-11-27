@@ -134,7 +134,61 @@ async function listApps({ home = os.homedir() } = {}) {
       }),
     ),
   );
-  return apps.filter(Boolean).sort((a, b) => a.name.localeCompare(b.name));
+  const list = apps.filter(Boolean).sort((a, b) => a.name.localeCompare(b.name));
+  const used = await lastUsedDates(list.map((a) => a.path));
+  list.forEach((a, i) => {
+    a.lastUsed = used[i];
+    a.lastUsedApprox = false;
+    if (a.lastUsed == null) {
+      // Spotlight often has no record (App Store apps, apps opened from the Dock).
+      // Apps write their settings and window state while in use, so those dates stand in.
+      a.lastUsed = activityDate(a, home);
+      a.lastUsedApprox = a.lastUsed != null;
+    }
+  });
+  return list;
+}
+
+/** Latest change to an app's preferences, saved window state or caches (not sandbox containers: reading those can trigger a privacy prompt). */
+function activityDate(app, home = os.homedir()) {
+  if (!app.id) return null;
+  const L = path.join(home, 'Library');
+  let latest = null;
+  for (const p of [path.join(L, 'Preferences', `${app.id}.plist`), path.join(L, 'Saved Application State', `${app.id}.savedState`), path.join(L, 'Caches', app.id), path.join(L, 'HTTPStorages', app.id)]) {
+    try {
+      const t = fs.statSync(p).mtimeMs;
+      if (latest == null || t > latest) latest = t;
+    } catch {
+      /* not there */
+    }
+  }
+  return latest;
+}
+
+/** Parse `mdls -raw` output for several files: NUL-separated values, "(null)" when unknown. */
+function parseMdlsDates(stdout, count) {
+  const parts = String(stdout).split('\0');
+  const out = [];
+  for (let i = 0; i < count; i++) {
+    const v = (parts[i] ?? '').trim();
+    const m = v.match(/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}) ([+-]\d{2})(\d{2})$/);
+    out.push(m ? Date.parse(`${m[1]}T${m[2]}${m[3]}:${m[4]}`) : null);
+  }
+  return out;
+}
+
+/**
+ * When each app was last opened, from Spotlight's metadata (what Finder shows
+ * as "Last opened"). null when macOS has no record.
+ */
+async function lastUsedDates(paths) {
+  const out = [];
+  for (let i = 0; i < paths.length; i += 100) {
+    const chunk = paths.slice(i, i + 100);
+    const res = await run('/usr/bin/mdls', ['-name', 'kMDItemLastUsedDate', '-raw', ...chunk], { timeout: 20000 });
+    out.push(...(res.code === 0 ? parseMdlsDates(res.stdout, chunk.length) : chunk.map(() => null)));
+  }
+  return out;
 }
 
 function exists(p) {
@@ -335,8 +389,13 @@ function adminMoveScript(paths, { home = os.homedir(), uid = process.getuid(), s
   const trash = path.join(home, '.Trash');
   const tag = stamp.toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const lines = ['set -e'];
+  const used = new Set();
   for (const p of paths) {
-    const dest = path.join(trash, `${path.basename(p)} (uninstalled ${tag})`);
+    // Two items with the same name would otherwise land inside each other.
+    let name = `${path.basename(p)} (uninstalled ${tag})`;
+    for (let n = 2; used.has(name); n++) name = `${path.basename(p)} (uninstalled ${tag} ${n})`;
+    used.add(name);
+    const dest = path.join(trash, name);
     lines.push(`mv ${shq(p)} ${shq(dest)}`, `chown -R ${Number(uid)} ${shq(dest)}`);
   }
   return lines.join('\n');
@@ -375,4 +434,7 @@ async function appIcon(app, cacheDir) {
   return `data:image/png;base64,${fs.readFileSync(out).toString('base64')}`;
 }
 
-module.exports = { listApps, appIcon, adminAppleScript, findAppFiles, classify, checkUninstallable, userCanMove, isRunning, adminMoveScript, SHARED_GROUPS, DOCUMENTS, CATEGORY_LABEL, expandHome };
+module.exports = {
+  parseMdlsDates,
+  activityDate,
+  lastUsedDates, listApps, appIcon, adminAppleScript, findAppFiles, classify, checkUninstallable, userCanMove, isRunning, adminMoveScript, SHARED_GROUPS, DOCUMENTS, CATEGORY_LABEL, expandHome };

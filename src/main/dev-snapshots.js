@@ -33,6 +33,7 @@ module.exports = async function snapAll(win, app, dir) {
       await waitFor(win, `!!document.querySelector('.app-item')`, 120000);
       await win.webContents.executeJavaScript(`(() => { const s = document.querySelector('input.search'); s.value = 'mainstage'; s.dispatchEvent(new Event('input')); s.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' })); })()`);
       await waitFor(win, `!!document.querySelector('.uninstall-bar')`, 180000);
+      await waitFor(win, `[...document.querySelectorAll('.app-sort .faint')].some(e => e.textContent.startsWith('Sizes include'))`, 120000);
     }
     if (routes[i] === 'projects') {
       await waitFor(win, `!!document.querySelector('.project-row')`, 240000);
@@ -47,6 +48,16 @@ module.exports = async function snapAll(win, app, dir) {
     const img = await win.webContents.capturePage();
     fs.writeFileSync(path.join(dir, `${i + 1}-${routes[i]}.png`), img.toPNG());
     if (routes[i] === 'hidden') {
+      // Default tab is "By app"; also capture an opened owner and the "By location" tab.
+      await waitFor(win, `!!document.querySelector('.owner-row')`, 180000);
+      await wait(600);
+      fs.writeFileSync(path.join(dir, `${i + 1}-hidden.png`), (await win.webContents.capturePage()).toPNG());
+      await win.webContents.executeJavaScript(`document.getElementById('view').scrollTop = 520`);
+      await wait(500);
+      fs.writeFileSync(path.join(dir, `${i + 1}-hidden-byapp-b.png`), (await win.webContents.capturePage()).toPNG());
+      await win.webContents.executeJavaScript(`[...document.querySelectorAll('.segmented button')].find(b => b.textContent === 'By location').click()`);
+      await wait(800);
+      fs.writeFileSync(path.join(dir, `${i + 1}-hidden-location.png`), (await win.webContents.capturePage()).toPNG());
       await win.webContents.executeJavaScript(`document.querySelector('[data-item]')?.classList.add('open'); document.getElementById('view').scrollTop = 760`);
       await wait(500);
       fs.writeFileSync(path.join(dir, `${i + 1}-${routes[i]}-b.png`), (await win.webContents.capturePage()).toPNG());

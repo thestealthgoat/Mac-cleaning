@@ -146,7 +146,7 @@ export function renderDupes(ctx) {
                     }),
                     h('span', { class: 'mono', title: f.path }, tilde(f.path)),
                     h('span', { class: 'faint' }, age(f.mtimeMs)),
-                    button('', { kind: 'ghost small', iconName: 'reveal', title: 'Show in Finder', onClick: () => api.reveal(f.path) }),
+                    button('Show in Finder', { kind: 'ghost small', title: 'Show in Finder', onClick: () => api.reveal(f.path) }),
                   ),
                 ),
               );

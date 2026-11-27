@@ -380,7 +380,7 @@ const CATALOG = [
     id: 'audio-content',
     name: 'Logic / GarageBand sound library',
     group: 'apple',
-    paths: ['/Library/Application Support/Logic', '/Library/Application Support/GarageBand', '/Library/Audio/Apple Loops'],
+    paths: ['/Library/Application Support/Logic', '/Library/Application Support/GarageBand', '/Library/Audio/Apple Loops', '~/Music/Logic Pro Library.bundle'],
     safety: 'review',
     action: 'none',
     breakdown: true,
@@ -509,4 +509,17 @@ const GROUPS = {
   user: { label: 'Your files', order: 5 },
 };
 
-module.exports = { CATALOG, GROUPS };
+/**
+ * Items that refill themselves with normal use. Clearing them frees space for
+ * days or weeks, not for good — Silt says so instead of counting them as a
+ * lasting win (a common complaint about other cleaners).
+ */
+const REGROWS = new Set([
+  'user-caches', 'electron-caches', 'browser-chrome', 'user-logs', 'shared-caches', 'temp-folders',
+  'xcode-deriveddata', 'xcode-device-support', 'simulator-caches', 'npm-cache', 'pnpm-store', 'yarn-cache',
+  'homebrew-cache', 'pip-cache', 'conda-pkgs', 'gradle', 'maven', 'cargo', 'go-mod', 'cocoapods',
+  'adobe-media-cache', 'mail-downloads', 'ios-updates', 'trash', 'downloads-installers',
+]);
+for (const entry of CATALOG) entry.regrows = REGROWS.has(entry.id);
+
+module.exports = { CATALOG, GROUPS, REGROWS };

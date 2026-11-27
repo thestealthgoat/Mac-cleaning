@@ -126,6 +126,10 @@ api.onJobProgress((p) => {
   if (el) {
     el.textContent = progressText(p);
   }
+  if (p.mode === 'by-app') {
+    const bar = document.querySelector('[data-byapp-progress]');
+    if (bar && p.total) bar.style.width = `${Math.max(8, ((p.done ?? 0) / p.total) * 100)}%`;
+  }
   const cur = document.querySelector('[data-job-current]');
   if (cur && p.current) cur.textContent = p.current.replace(state.overview?.home ?? '', '~');
 });

@@ -1,4 +1,5 @@
 import { h, bytes, button, busy, toast, viewHead, cleanupToast } from '../ui.js';
+import { changesCard } from './history.js';
 
 export function renderOverview(ctx) {
   const { api, state } = ctx;
@@ -25,6 +26,7 @@ export function renderOverview(ctx) {
     viewHead('Overview', `${o.machine.model} · macOS ${o.machine.macos}`, exportBtn, rescan),
     !o.fullDiskAccess ? fdaBanner(api) : null,
     h('div', { class: 'grid hero' }, scoreCard(o), capacityCard(o)),
+    state.hidden?.history ? changesCard(ctx, { compact: true }) : null,
     h('div', { class: 'section-title' }, 'What to do'),
     h('div', { class: 'card' }, findingsList(ctx)),
   );
@@ -152,7 +154,7 @@ function actionsFor(f, ctx) {
   }
   if (a.type === 'command') {
     return [
-      button('', { kind: 'ghost small', iconName: 'copy', title: `Copy: ${a.command}`, onClick: async () => (await api.copyCommand(a.command), toast('Command copied.')) }),
+      button('Copy', { kind: 'ghost small', iconName: 'copy', title: `Copy: ${a.command}`, onClick: async () => (await api.copyCommand(a.command), toast('Command copied.')) }),
       button('Run in Terminal', { kind: 'small', iconName: 'terminal', onClick: () => api.runCommand(a.command) }),
     ];
   }
